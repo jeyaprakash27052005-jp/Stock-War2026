@@ -347,14 +347,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                             onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'buy')}
                             className="px-2 py-0.5 bg-[#2FBF71] text-[#06170F] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
-                            Buy CE
+                            Long CE
                           </button>
                           <button
                             type="button"
                             onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'sell')}
                             className="px-2 py-0.5 bg-[#E2564F] text-[#FFFFFF] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
-                            Sell
+                            Short CE
                           </button>
                         </div>
                       </td>
@@ -378,14 +378,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                             onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'buy')}
                             className="px-2 py-0.5 bg-[#2FBF71] text-[#06170F] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
-                            Buy PE
+                            Long PE
                           </button>
                           <button
                             type="button"
                             onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'sell')}
                             className="px-2 py-0.5 bg-[#E2564F] text-[#FFFFFF] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
-                            Sell
+                            Short PE
                           </button>
                         </div>
                       </td>
@@ -584,7 +584,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                       : 'bg-[#E2564F] text-[#FFFFFF] hover:brightness-110'
                   }`}
                 >
-                  {submitting ? 'Placing...' : `Confirm ${fnoModal.side.toUpperCase()}`}
+                  {submitting ? 'Placing...' : `Confirm ${fnoModal.side === 'buy' ? 'LONG' : 'SHORT'}`}
                 </button>
               </div>
             </div>
