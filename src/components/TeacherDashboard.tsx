@@ -243,14 +243,43 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   };
 
   // Print / export a full trading history report for a single student (all sections)
-  const handlePrintStudentReport = (data: (typeof studentStats)[number]) => {
+  const REPORT_STYLES = `
+  * { box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; color: #111; margin: 32px; font-size: 12px; }
+  h1 { font-size: 20px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #111; padding-bottom: 4px; }
+  .meta { color: #444; font-size: 11px; margin-bottom: 16px; line-height: 1.6; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 20px; }
+  .summary-box { border: 1px solid #999; padding: 8px 10px; }
+  .summary-box .label { font-size: 9px; text-transform: uppercase; color: #666; }
+  .summary-box .value { font-size: 14px; font-weight: bold; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  th, td { border: 1px solid #999; padding: 4px 6px; font-size: 10.5px; text-align: right; }
+  th { background: #eee; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .pos { color: #0a7a34; font-weight: bold; }
+  .neg { color: #b3261e; font-weight: bold; }
+  .empty-note { color: #777; font-style: italic; padding: 8px 0; }
+  .badge { display: inline-block; padding: 2px 8px; border: 1px solid #111; font-size: 10px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
+  footer { margin-top: 30px; font-size: 9px; color: #777; border-top: 1px solid #ccc; padding-top: 8px; }
+  .student-block + .student-block { page-break-before: always; }
+  .cover-table td, .cover-table th { text-align: right; }
+  .cover-table td:first-child, .cover-table th:first-child { text-align: left; }
+  @media print {
+    body { margin: 12mm; }
+    h2 { page-break-after: avoid; }
+    table { page-break-inside: avoid; }
+  }`;
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmtTime = (t: number) => new Date(t).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+
+  // Builds the inner HTML (everything inside one student's report block, no <html>/<head>/<body>)
+  const buildStudentReportSection = (data: (typeof studentStats)[number]): string => {
     const st = data.portfolio;
     const generatedAt = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
-
-    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const fmtTime = (t: number) => new Date(t).toLocaleString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
 
     const equityRows = (Object.entries(st.holdings || {}) as [string, Holding][]).map(([sym, h]) => {
       const stock = allStocks.find(s => s.sym === sym);
@@ -284,38 +313,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     const statusLabel = st.isDeleted ? 'DELETED / INVALID' : st.isFrozen ? 'FROZEN' : 'ACTIVE';
     const totalPnl = data.netWorth - STARTING_CASH;
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Trading Report - ${esc(st.roll)}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: 'Courier New', monospace; color: #111; margin: 32px; font-size: 12px; }
-  h1 { font-size: 20px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
-  h2 { font-size: 14px; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #111; padding-bottom: 4px; }
-  .meta { color: #444; font-size: 11px; margin-bottom: 16px; line-height: 1.6; }
-  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 20px; }
-  .summary-box { border: 1px solid #999; padding: 8px 10px; }
-  .summary-box .label { font-size: 9px; text-transform: uppercase; color: #666; }
-  .summary-box .value { font-size: 14px; font-weight: bold; margin-top: 2px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-  th, td { border: 1px solid #999; padding: 4px 6px; font-size: 10.5px; text-align: right; }
-  th { background: #eee; text-align: right; }
-  th:first-child, td:first-child { text-align: left; }
-  .pos { color: #0a7a34; font-weight: bold; }
-  .neg { color: #b3261e; font-weight: bold; }
-  .empty-note { color: #777; font-style: italic; padding: 8px 0; }
-  .badge { display: inline-block; padding: 2px 8px; border: 1px solid #111; font-size: 10px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
-  footer { margin-top: 30px; font-size: 9px; color: #777; border-top: 1px solid #ccc; padding-top: 8px; }
-  @media print {
-    body { margin: 12mm; }
-    h2 { page-break-after: avoid; }
-    table { page-break-inside: avoid; }
-  }
-</style>
-</head>
-<body>
+    return `
+  <div class="student-block">
   <h1>Stock War 2026 &mdash; Student Trading Report <span class="badge">${statusLabel}</span></h1>
   <div class="meta">
     Roll No: <strong>${esc(st.roll)}</strong> &nbsp;|&nbsp;
@@ -395,6 +394,20 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   <footer>
     Stock War 2026 Paper Trading Simulation &mdash; This report reflects simulated trading activity only and holds no real monetary value.
   </footer>
+  </div>`;
+  };
+
+  // Opens a formatted HTML document in a new tab and triggers the print dialog
+  const openPrintWindow = (title: string, bodyHtml: string) => {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${esc(title)}</title>
+<style>${REPORT_STYLES}</style>
+</head>
+<body>
+${bodyHtml}
 </body>
 </html>`;
 
@@ -410,6 +423,50 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     setTimeout(() => {
       try { printWindow.print(); } catch { /* no-op */ }
     }, 350);
+  };
+
+  // Print a single student's full trading history report
+  const handlePrintStudentReport = (data: (typeof studentStats)[number]) => {
+    openPrintWindow(`Trading Report - ${data.portfolio.roll}`, buildStudentReportSection(data));
+  };
+
+  // Print a combined report for every (currently filtered) student, one after another,
+  // each starting on a fresh page, with a cover page summary table up front.
+  const handlePrintAllStudentsReport = (dataList: (typeof studentStats)) => {
+    if (dataList.length === 0) {
+      setActionToast({ message: 'No students match the current filters to print.', type: 'error' });
+      return;
+    }
+    const generatedAt = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    const coverRows = dataList.map(d => {
+      const totalPnl = d.netWorth - STARTING_CASH;
+      const statusLabel = d.portfolio.isDeleted ? 'DELETED' : d.portfolio.isFrozen ? 'FROZEN' : 'ACTIVE';
+      return `<tr>
+        <td>${esc(d.portfolio.roll)}</td>
+        <td>${esc(d.portfolio.studentName || 'N/A')}</td>
+        <td>${statusLabel}</td>
+        <td>${inr(d.netWorth)}</td>
+        <td class="${totalPnl >= 0 ? 'pos' : 'neg'}">${totalPnl >= 0 ? '+' : ''}${inr(totalPnl)}</td>
+        <td>${d.totalTrades}</td>
+      </tr>`;
+    }).join('');
+
+    const cover = `
+  <div class="student-block">
+  <h1>Stock War 2026 &mdash; Full Class Trading Report</h1>
+  <div class="meta">
+    Students included: <strong>${dataList.length}</strong> &nbsp;|&nbsp;
+    Report generated: ${generatedAt}
+  </div>
+  <h2>Class Summary</h2>
+  <table class="cover-table">
+    <thead><tr><th>Roll No</th><th>Name</th><th>Status</th><th>Net Worth</th><th>Total P&amp;L</th><th>Trades</th></tr></thead>
+    <tbody>${coverRows}</tbody>
+  </table>
+  </div>`;
+
+    const sections = dataList.map(d => buildStudentReportSection(d)).join('\n');
+    openPrintWindow('Full Class Trading Report', cover + sections);
   };
 
   // Toast auto-clear
@@ -1024,8 +1081,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   </div>
                 </div>
 
-                <div className="text-xs text-[#6B7680] font-mono">
-                  Showing {filteredStudents.length} of {totalCount} records
+                <div className="flex items-center gap-3">
+                  <div className="text-xs text-[#6B7680] font-mono">
+                    Showing {filteredStudents.length} of {totalCount} records
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handlePrintAllStudentsReport(filteredStudents)}
+                    className="px-3 py-1.5 bg-[#1F2A33] border border-[#D4A93F] text-[#D4A93F] hover:bg-[#D4A93F] hover:text-[#0A0E14] text-xs uppercase font-bold tracking-wider transition cursor-pointer flex items-center gap-1.5"
+                    title="Print a combined trading history report for every student currently shown"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print All ({filteredStudents.length})
+                  </button>
                 </div>
               </div>
 
