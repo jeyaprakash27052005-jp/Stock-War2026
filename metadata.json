@@ -1,0 +1,6 @@
+{
+  "name": "PaperFloor — F&O Trading Floor",
+  "description": "Real-time F&O and equity paper trading terminal with Firestore cloud synchronization and instructor dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
