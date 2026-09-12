@@ -569,6 +569,122 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   </table>
                 </div>
               </div>
+
+              {/* F&O Open Positions */}
+              <div className="bg-[#10161D] border border-[#1F2A33] p-4">
+                <h4 className="text-xs uppercase font-bold tracking-wider text-[#6B7680] mb-3">
+                  F&amp;O Open Positions ({Object.keys(currentStudentData.portfolio.fno?.positions || {}).length})
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse font-mono text-xs">
+                    <thead>
+                      <tr className="border-b border-[#1F2A33] text-[#6B7680]">
+                        <th className="p-2 text-left">Instrument</th>
+                        <th className="p-2 text-left">Side</th>
+                        <th className="p-2 text-right">Lots</th>
+                        <th className="p-2 text-right">Avg Price</th>
+                        <th className="p-2 text-right">LTP</th>
+                        <th className="p-2 text-right">Margin</th>
+                        <th className="p-2 text-right">Unrealized P&amp;L</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1F2A33]">
+                      {(Object.entries(currentStudentData.portfolio.fno?.positions || {}) as [string, FnoPosition][])
+                        .filter(([, pos]) => pos.lots > 0)
+                        .map(([key, pos]) => {
+                          const stock = allStocks.find(s => s.sym === pos.underlying);
+                          const und = underlyings.find(u => u.sym === pos.underlying);
+                          const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
+                          const sigma = und?.sigma || 0.25;
+                          const cur = pos.kind === 'FUT'
+                            ? futPrice(spot)
+                            : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, sigma, pos.optType || 'CE');
+                          const pnl = pos.side === 'long'
+                            ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
+                            : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
+                          const instrument = pos.kind === 'FUT'
+                            ? `${pos.underlying} FUT`
+                            : `${pos.underlying} ${pos.strike} ${pos.optType}`;
+                          return (
+                            <tr key={key}>
+                              <td className="p-2 font-bold text-[#F1F4F6]">{instrument}</td>
+                              <td className={`p-2 font-bold uppercase ${pos.side === 'long' ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
+                                {pos.side}
+                              </td>
+                              <td className="p-2 text-right text-[#C9D3D9]">{pos.lots}</td>
+                              <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.avgPrice)}</td>
+                              <td className="p-2 text-right text-[#D4A93F]">{inr(cur)}</td>
+                              <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.margin || 0)}</td>
+                              <td className={`p-2 text-right font-semibold ${pnl >= 0 ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
+                                {pnl >= 0 ? '+' : ''}{inr(pnl)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      {Object.entries(currentStudentData.portfolio.fno?.positions || {}).filter(([, pos]) => (pos as FnoPosition).lots > 0).length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-4 text-center text-[#6B7680]">No open F&amp;O positions.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* F&O Trade History */}
+              <div className="bg-[#10161D] border border-[#1F2A33] p-4">
+                <h4 className="text-xs uppercase font-bold tracking-wider text-[#6B7680] mb-3">
+                  F&amp;O Trade History ({(currentStudentData.portfolio.fno?.transactions || []).length})
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse font-mono text-xs">
+                    <thead>
+                      <tr className="border-b border-[#1F2A33] text-[#6B7680]">
+                        <th className="p-2 text-left">Time</th>
+                        <th className="p-2 text-left">Instrument</th>
+                        <th className="p-2 text-left">Side</th>
+                        <th className="p-2 text-right">Lots</th>
+                        <th className="p-2 text-right">Price</th>
+                        <th className="p-2 text-right">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1F2A33]">
+                      {[...(currentStudentData.portfolio.fno?.transactions || [])]
+                        .sort((a, b) => b.time - a.time)
+                        .map((t, idx) => {
+                          const instrument = t.kind === 'FUT'
+                            ? `${t.underlying} FUT`
+                            : `${t.underlying} ${t.strike} ${t.optType}`;
+                          return (
+                            <tr key={idx}>
+                              <td className="p-2 text-[#6B7680]">
+                                {new Date(t.time).toLocaleString('en-IN', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit'
+                                })}
+                              </td>
+                              <td className="p-2 font-bold text-[#F1F4F6]">{instrument}</td>
+                              <td className={`p-2 font-bold uppercase ${t.side === 'buy' ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
+                                {t.side}
+                              </td>
+                              <td className="p-2 text-right text-[#C9D3D9]">{t.lots}</td>
+                              <td className="p-2 text-right text-[#C9D3D9]">{inr(t.price)}</td>
+                              <td className="p-2 text-right text-[#F1F4F6] font-semibold">{inr(t.lots * t.price)}</td>
+                            </tr>
+                          );
+                        })}
+                      {(currentStudentData.portfolio.fno?.transactions || []).length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="p-4 text-center text-[#6B7680]">No F&amp;O trades yet.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           ) : (
             <>

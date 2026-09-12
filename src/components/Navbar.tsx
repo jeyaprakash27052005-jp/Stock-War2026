@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { inr } from '../marketData';
-import { AlertTriangle, Trash2 } from 'lucide-react';
 
 interface NavbarProps {
   userRole: 'student' | 'teacher';
@@ -19,23 +18,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   studentName,
   cash,
   isFrozen,
-  onLogout,
-  onDeleteAccount
+  onLogout
 }) => {
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const handleConfirmDelete = async () => {
-    if (!onDeleteAccount) return;
-    setIsDeleting(true);
-    try {
-      await onDeleteAccount();
-    } finally {
-      setIsDeleting(false);
-      setShowDeleteModal(false);
-    }
-  };
-
   return (
     <>
       <header className="flex items-center justify-between px-6 py-3.5 border-b border-[#1F2A33] bg-[#10161D] flex-wrap gap-3">
@@ -78,18 +62,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Firestore Sync</span>
           </div>
 
-          {userRole === 'student' && onDeleteAccount && (
-            <button
-              type="button"
-              id="deleteAccountBtn"
-              onClick={() => setShowDeleteModal(true)}
-              className="border border-[#E2564F]/50 text-[#E2564F] hover:bg-[#E2564F] hover:text-white px-3 py-1.5 text-xs tracking-wider uppercase font-semibold transition cursor-pointer"
-              title="Delete Account"
-            >
-              Delete Account
-            </button>
-          )}
-
           <button
             type="button"
             id="logoutBtn"
@@ -100,57 +72,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
       </header>
-
-      {/* In-App Delete Account Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-[#05070A]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#10161D] border border-[#E2564F] p-6 shadow-2xl space-y-4 font-mono">
-            <div className="flex items-center gap-3 text-[#E2564F]">
-              <div className="p-2 bg-[#E2564F]/10 border border-[#E2564F]">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold uppercase tracking-wider text-[#F1F4F6]">
-                  Delete Account Confirmation
-                </h3>
-                <span className="text-xs text-[#E2564F]">User ID: {roll}</span>
-              </div>
-            </div>
-
-            <div className="text-xs text-[#C9D3D9] bg-[#141B23] p-3 border border-[#1F2A33] space-y-2 leading-relaxed">
-              <p>
-                Are you sure you want to delete your student account?
-              </p>
-              <p className="text-[#E2564F] font-bold">
-                ⚠️ Once deleted, you will be logged out immediately. Any future login attempt with this User ID will show:
-              </p>
-              <div className="p-2 bg-[#E2564F]/10 border border-[#E2564F]/40 text-[#E2564F] font-bold text-center">
-                "Invalid account"
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(false)}
-                disabled={isDeleting}
-                className="flex-1 py-2.5 border border-[#1F2A33] text-[#6B7680] hover:text-[#F1F4F6] text-xs uppercase font-bold tracking-wider cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                disabled={isDeleting}
-                className="flex-1 py-2.5 bg-[#E2564F] text-white font-bold text-xs uppercase tracking-wider hover:brightness-110 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                {isDeleting ? 'Deleting...' : 'Yes, Delete Account'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 };
