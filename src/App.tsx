@@ -117,7 +117,8 @@ export default function App() {
               spot: typeof fsData.price === 'number' ? fsData.price : (typeof fsData.ltp === 'number' ? fsData.ltp : existing.spot),
               sigma: fsData.sigma !== undefined ? fsData.sigma : existing.sigma,
               lotSize: fsData.lotSize !== undefined ? fsData.lotSize : existing.lotSize,
-              strikeStep: fsData.strikeStep !== undefined ? fsData.strikeStep : existing.strikeStep
+              strikeStep: fsData.strikeStep !== undefined ? fsData.strikeStep : existing.strikeStep,
+              expiry: fsData.expiry !== undefined ? fsData.expiry : existing.expiry
             });
           } else if (fsData.fno) {
             undMap.set(sym, {
@@ -127,6 +128,7 @@ export default function App() {
               sigma: fsData.sigma || 0.25,
               lotSize: fsData.lotSize || 100,
               strikeStep: fsData.strikeStep || Math.max(5, Math.round((fsData.price || 1000) * 0.02)),
+              expiry: fsData.expiry,
               isCustom: true
             });
           } else if (fsData.fno === false && undMap.has(sym) && undMap.get(sym)?.isCustom) {
@@ -478,8 +480,8 @@ export default function App() {
       const sigma = und?.sigma || 0.25;
 
       calculatedExitPrice = pos.kind === 'FUT'
-        ? futPrice(spot)
-        : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, sigma, pos.optType || 'CE');
+        ? futPrice(spot, und?.expiry)
+        : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
 
       const totalQty = pos.lots * pos.lotSize;
       calculatedPnl = pos.side === 'long'
@@ -565,11 +567,19 @@ export default function App() {
           spot: typeof updates.price === 'number' ? updates.price : (typeof updates.ltp === 'number' ? updates.ltp : u.spot),
           sigma: updates.sigma !== undefined ? updates.sigma : u.sigma,
           lotSize: updates.lotSize !== undefined ? updates.lotSize : u.lotSize,
-          strikeStep: updates.strikeStep !== undefined ? updates.strikeStep : u.strikeStep
+          strikeStep: updates.strikeStep !== undefined ? updates.strikeStep : u.strikeStep,
+          expiry: updates.expiry !== undefined ? updates.expiry : u.expiry
         };
       }
       return u;
     }));
+  };
+
+  // Teacher sets/edits the expiry date for any F&O underlying (stock, index, or commodity)
+  const handleUpdateUnderlyingExpiry = async (sym: string, expiry: number) => {
+    const normalized = sym.toUpperCase();
+    await saveCompanyToFirestore({ sym: normalized, expiry });
+    setUnderlyings(prev => prev.map(u => u.sym === normalized ? { ...u, expiry } : u));
   };
 
   // Teacher adds new company to Firestore
@@ -607,8 +617,8 @@ export default function App() {
     const spot = st ? st.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
     const cfg = und || { sigma: 0.25 };
     const cur = pos.kind === 'FUT'
-      ? futPrice(spot)
-      : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
+      ? futPrice(spot, und?.expiry)
+      : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
     const pnl = pos.side === 'long'
       ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
       : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -813,6 +823,7 @@ export default function App() {
                 onUpdateCompany={handleUpdateCompany}
                 onAddCompany={handleAddCompany}
                 onDeleteCompany={handleDeleteCompany}
+                onUpdateUnderlyingExpiry={handleUpdateUnderlyingExpiry}
               />
             )}
           </main>

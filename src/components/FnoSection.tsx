@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FnoUnderlying, FnoPosition, Stock } from '../types';
-import { inr, futPrice, bsPrice, daysToExpiry, RISK_FREE } from '../marketData';
+import { inr, futPrice, bsPrice, daysToExpiry, formatExpiryDate, RISK_FREE } from '../marketData';
 
 interface FnoSectionProps {
   underlyings: FnoUnderlying[];
@@ -73,10 +73,10 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
     side: 'buy' | 'sell'
   ) => {
     const spot = getSpot(sym);
-    const cfg = underlyings.find(u => u.sym === sym) || { sigma: 0.25 };
+    const cfg = underlyings.find(u => u.sym === sym) || { sigma: 0.25, expiry: undefined as number | undefined };
     const price = kind === 'FUT'
-      ? futPrice(spot)
-      : bsPrice(spot, strike || spot, daysToExpiry() / 365, RISK_FREE, cfg.sigma, optType || 'CE');
+      ? futPrice(spot, cfg.expiry)
+      : bsPrice(spot, strike || spot, daysToExpiry(cfg.expiry) / 365, RISK_FREE, cfg.sigma, optType || 'CE');
 
     const label = kind === 'FUT'
       ? `${sym} FUTURES`
@@ -137,7 +137,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
   for (let i = -5; i <= 5; i++) {
     strikes.push(atm + i * activeCfg.strikeStep);
   }
-  const tYears = daysToExpiry() / 365;
+  const tYears = daysToExpiry(activeCfg.expiry) / 365;
   const optionRows = strikes.map(k => ({
     strike: k,
     ce: bsPrice(activeSpot, k, tYears, RISK_FREE, activeCfg.sigma, 'CE'),
@@ -207,6 +207,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                 <th className="text-left text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Contract</th>
                 <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Spot (₹)</th>
                 <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Futures Price (₹)</th>
+                <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Expiry</th>
                 <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Lot Size</th>
                 <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Margin / Lot</th>
                 <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Actions</th>
@@ -215,7 +216,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
             <tbody className="divide-y divide-[#1F2A33]">
               {filteredUnderlyings.map(u => {
                 const spot = getSpot(u.sym);
-                const fp = futPrice(spot);
+                const fp = futPrice(spot, u.expiry);
                 const marginPerLot = fp * u.lotSize * 0.12;
                 const stockMatch = stocks.find(s => s.sym === u.sym);
                 const undTick = stockMatch ? stockMatch.tickDirection : u.tickDirection;
@@ -239,6 +240,10 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                       <span className={spotTickClass}>{inr(spot)}</span>
                     </td>
                     <td className="p-3 text-right text-sm font-semibold text-[#D4A93F]">{inr(fp)}</td>
+                    <td className="p-3 text-right text-xs text-[#C9D3D9]">
+                      {formatExpiryDate(u.expiry)}
+                      <div className="text-[10px] text-[#6B7680]">{daysToExpiry(u.expiry)}d left</div>
+                    </td>
                     <td className="p-3 text-right text-xs text-[#C9D3D9]">{u.lotSize}</td>
                     <td className="p-3 text-right text-xs text-[#6B7680]">{inr(marginPerLot)}</td>
                     <td className="p-3 text-right">
@@ -305,8 +310,10 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
               <div className="text-sm font-semibold text-[#F1F4F6]">{activeCfg.lotSize} shares</div>
             </div>
             <div className="text-right">
-              <div className="text-[10px] text-[#6B7680] uppercase tracking-wider">Days to Expiry</div>
-              <div className="text-sm font-semibold text-[#F1F4F6]">{daysToExpiry()} Days</div>
+              <div className="text-[10px] text-[#6B7680] uppercase tracking-wider">Expiry</div>
+              <div className="text-sm font-semibold text-[#F1F4F6]">
+                {formatExpiryDate(activeCfg.expiry)} <span className="text-[#6B7680] font-normal">({daysToExpiry(activeCfg.expiry)}d)</span>
+              </div>
             </div>
           </div>
 
@@ -428,6 +435,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Lots</th>
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Avg Price (₹)</th>
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Current LTP (₹)</th>
+                    <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Expiry</th>
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Margin (₹)</th>
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Unrealized P&amp;L</th>
                     <th className="text-right text-[11px] uppercase tracking-wider text-[#6B7680] p-3">Action</th>
@@ -436,10 +444,10 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                 <tbody className="divide-y divide-[#1F2A33]">
                   {(Object.entries(positions) as [string, FnoPosition][]).map(([key, pos]) => {
                     const spot = getSpot(pos.underlying);
-                    const cfg = underlyings.find(u => u.sym === pos.underlying) || { sigma: 0.25 };
+                    const cfg = underlyings.find(u => u.sym === pos.underlying) || { sigma: 0.25, expiry: undefined as number | undefined };
                     const curPrice = pos.kind === 'FUT'
-                      ? futPrice(spot)
-                      : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
+                      ? futPrice(spot, cfg.expiry)
+                      : bsPrice(spot, pos.strike || spot, daysToExpiry(cfg.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
 
                     const pnl = pos.side === 'long'
                       ? (curPrice - pos.avgPrice) * pos.lots * pos.lotSize
@@ -459,6 +467,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                         <td className="p-3 text-right text-[#F1F4F6]">{pos.lots}</td>
                         <td className="p-3 text-right text-[#C9D3D9]">{inr(pos.avgPrice)}</td>
                         <td className="p-3 text-right text-[#C9D3D9]">{inr(curPrice)}</td>
+                        <td className="p-3 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(cfg.expiry)}</td>
                         <td className="p-3 text-right text-[#6B7680]">{inr(pos.margin)}</td>
                         <td className={`p-3 text-right font-semibold ${isProfit ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
                           {isProfit ? '+' : ''}{inr(pnl)}

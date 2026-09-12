@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock } from 'lucide-react';
 import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition } from '../types';
-import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, RISK_FREE } from '../marketData';
+import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, expiryToDateInputValue, RISK_FREE } from '../marketData';
 
 interface TeacherDashboardProps {
   students: Portfolio[];
@@ -15,6 +15,7 @@ interface TeacherDashboardProps {
   onUpdateCompany: (sym: string, updates: Partial<Stock>) => Promise<void>;
   onAddCompany: (stock: Partial<Stock>) => Promise<void>;
   onDeleteCompany: (sym: string) => Promise<void>;
+  onUpdateUnderlyingExpiry: (sym: string, expiry: number) => Promise<void>;
 }
 
 interface ActionModalConfig {
@@ -38,9 +39,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onRestoreStudent,
   onUpdateCompany,
   onAddCompany,
-  onDeleteCompany
+  onDeleteCompany,
+  onUpdateUnderlyingExpiry
 }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'companies'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'companies' | 'expiry'>('students');
   const [selectedStudentRoll, setSelectedStudentRoll] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [studentStatusFilter, setStudentStatusFilter] = useState<'ALL' | 'ACTIVE' | 'FROZEN' | 'DELETED'>('ALL');
@@ -77,6 +79,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [newStrikeStep, setNewStrikeStep] = useState<number>(20);
   const [addMsg, setAddMsg] = useState<string | null>(null);
 
+  // F&O Expiry Management State (per-instrument, editable for every stock, index & commodity)
+  const [expirySearch, setExpirySearch] = useState<string>('');
+  const [expiryDrafts, setExpiryDrafts] = useState<Record<string, string>>({});
+  const [savingExpirySym, setSavingExpirySym] = useState<string | null>(null);
+  const [expiryToast, setExpiryToast] = useState<{ sym: string; message: string; type: 'success' | 'error' } | null>(null);
+
   const sectors = ['ALL', ...Array.from(new Set(allStocks.map(s => s.sector))).sort()];
 
   // Calculate Net Worth for each student
@@ -97,8 +105,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
       const sigma = und?.sigma || 0.25;
       const cur = pos.kind === 'FUT'
-        ? futPrice(spot)
-        : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, sigma, pos.optType || 'CE');
+        ? futPrice(spot, und?.expiry)
+        : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
       const pnl = pos.side === 'long'
         ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
         : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -243,6 +251,40 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     }
   }, [actionToast]);
 
+  // Expiry toast auto-clear
+  React.useEffect(() => {
+    if (expiryToast) {
+      const timer = setTimeout(() => {
+        setExpiryToast(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [expiryToast]);
+
+  // Teacher sets/updates the expiry date for one F&O instrument (stock, index or commodity)
+  const handleSaveExpiry = async (sym: string, dateValue: string) => {
+    if (!dateValue) {
+      setExpiryToast({ sym, message: 'Pick a valid date first.', type: 'error' });
+      return;
+    }
+    // Set expiry to end-of-day (23:59:59) on the chosen date, in local time.
+    const chosen = new Date(dateValue + 'T23:59:59');
+    if (isNaN(chosen.getTime())) {
+      setExpiryToast({ sym, message: 'Invalid date.', type: 'error' });
+      return;
+    }
+    setSavingExpirySym(sym);
+    try {
+      await onUpdateUnderlyingExpiry(sym, chosen.getTime());
+      setExpiryToast({ sym, message: `${sym} expiry updated to ${chosen.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}.`, type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update expiry';
+      setExpiryToast({ sym, message: msg, type: 'error' });
+    } finally {
+      setSavingExpirySym(null);
+    }
+  };
+
   // Execute confirmed modal action
   const handleExecuteAction = async () => {
     if (!confirmModal) return;
@@ -349,6 +391,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             }`}
           >
             All Listed Companies &amp; Update Options ({allStocks.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => { setActiveTab('expiry'); setSelectedStudentRoll(null); }}
+            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border flex items-center gap-1.5 ${
+              activeTab === 'expiry'
+                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
+                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
+            }`}
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+            F&amp;O Expiry Management ({underlyings.length})
           </button>
         </div>
       </div>
@@ -584,6 +638,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                         <th className="p-2 text-right">Lots</th>
                         <th className="p-2 text-right">Avg Price</th>
                         <th className="p-2 text-right">LTP</th>
+                        <th className="p-2 text-right">Expiry</th>
                         <th className="p-2 text-right">Margin</th>
                         <th className="p-2 text-right">Unrealized P&amp;L</th>
                       </tr>
@@ -597,8 +652,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
                           const sigma = und?.sigma || 0.25;
                           const cur = pos.kind === 'FUT'
-                            ? futPrice(spot)
-                            : bsPrice(spot, pos.strike || spot, daysToExpiry() / 365, RISK_FREE, sigma, pos.optType || 'CE');
+                            ? futPrice(spot, und?.expiry)
+                            : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
                           const pnl = pos.side === 'long'
                             ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
                             : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -614,6 +669,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                               <td className="p-2 text-right text-[#C9D3D9]">{pos.lots}</td>
                               <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.avgPrice)}</td>
                               <td className="p-2 text-right text-[#D4A93F]">{inr(cur)}</td>
+                              <td className="p-2 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(und?.expiry)}</td>
                               <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.margin || 0)}</td>
                               <td className={`p-2 text-right font-semibold ${pnl >= 0 ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
                                 {pnl >= 0 ? '+' : ''}{inr(pnl)}
@@ -623,7 +679,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                         })}
                       {Object.entries(currentStudentData.portfolio.fno?.positions || {}).filter(([, pos]) => (pos as FnoPosition).lots > 0).length === 0 && (
                         <tr>
-                          <td colSpan={7} className="p-4 text-center text-[#6B7680]">No open F&amp;O positions.</td>
+                          <td colSpan={8} className="p-4 text-center text-[#6B7680]">No open F&amp;O positions.</td>
                         </tr>
                       )}
                     </tbody>
@@ -1371,6 +1427,106 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ===================== TAB: F&O EXPIRY MANAGEMENT ===================== */}
+      {activeTab === 'expiry' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold uppercase tracking-wider text-[#F1F4F6]">
+                F&amp;O Expiry Management
+              </h3>
+              <p className="text-xs text-[#6B7680] mt-1">
+                Set or change the expiry date for any stock, index, or commodity contract. Updating an expiry
+                immediately re-prices that instrument's options/futures and open positions for every student.
+              </p>
+            </div>
+            <input
+              type="text"
+              placeholder="Search underlying..."
+              value={expirySearch}
+              onChange={(e) => setExpirySearch(e.target.value)}
+              className="bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-1.5 font-mono outline-none focus:border-[#D4A93F]"
+            />
+          </div>
+
+          {expiryToast && (
+            <div className={`p-2.5 border text-xs font-mono ${
+              expiryToast.type === 'success'
+                ? 'bg-[#2FBF71]/10 border-[#2FBF71]/30 text-[#2FBF71]'
+                : 'bg-[#E2564F]/10 border-[#E2564F]/30 text-[#E2564F]'
+            }`}>
+              [{expiryToast.sym}] {expiryToast.message}
+            </div>
+          )}
+
+          <div className="bg-[#10161D] border border-[#1F2A33] overflow-x-auto">
+            <table className="w-full border-collapse font-mono text-xs">
+              <thead>
+                <tr className="border-b border-[#1F2A33] bg-[#141B23] text-[#6B7680]">
+                  <th className="p-3 text-left uppercase tracking-wider">Symbol</th>
+                  <th className="p-3 text-left uppercase tracking-wider">Name</th>
+                  <th className="p-3 text-left uppercase tracking-wider">Type</th>
+                  <th className="p-3 text-right uppercase tracking-wider">Current Expiry</th>
+                  <th className="p-3 text-right uppercase tracking-wider">Days Left</th>
+                  <th className="p-3 text-right uppercase tracking-wider">Set New Expiry</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1F2A33]">
+                {underlyings
+                  .filter(u => {
+                    const q = expirySearch.trim().toLowerCase();
+                    return !q || u.sym.toLowerCase().includes(q) || u.name.toLowerCase().includes(q);
+                  })
+                  .sort((a, b) => a.kind === b.kind ? a.sym.localeCompare(b.sym) : a.kind.localeCompare(b.kind))
+                  .map(u => {
+                    const draft = expiryDrafts[u.sym] ?? expiryToDateInputValue(u.expiry);
+                    const isSaving = savingExpirySym === u.sym;
+                    return (
+                      <tr key={u.sym} className="hover:bg-[#141B23] transition-colors">
+                        <td className="p-3 font-bold text-[#F1F4F6]">{u.sym}</td>
+                        <td className="p-3 text-[#C9D3D9] font-sans">{u.name}</td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 border border-[#1F2A33] text-[10px] uppercase tracking-wider text-[#6B7680]">
+                            {u.kind}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right text-[#D4A93F]">{formatExpiryDate(u.expiry)}</td>
+                        <td className="p-3 text-right text-[#C9D3D9]">{daysToExpiry(u.expiry)}d</td>
+                        <td className="p-3 text-right">
+                          <div className="inline-flex items-center gap-2">
+                            <input
+                              type="date"
+                              value={draft}
+                              onChange={(e) => setExpiryDrafts(prev => ({ ...prev, [u.sym]: e.target.value }))}
+                              className="bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] text-xs px-2 py-1 outline-none focus:border-[#D4A93F]"
+                            />
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={() => handleSaveExpiry(u.sym, draft)}
+                              className="px-3 py-1 bg-[#D4A93F] text-[#0A0E14] font-bold text-[10px] uppercase tracking-wider hover:brightness-110 cursor-pointer disabled:opacity-50"
+                            >
+                              {isSaving ? 'Saving...' : 'Update'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                {underlyings.filter(u => {
+                  const q = expirySearch.trim().toLowerCase();
+                  return !q || u.sym.toLowerCase().includes(q) || u.name.toLowerCase().includes(q);
+                }).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-4 text-center text-[#6B7680]">No matching instruments.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

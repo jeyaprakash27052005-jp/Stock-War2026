@@ -14,6 +14,7 @@ export interface Stock {
   lotSize?: number;
   sigma?: number;
   strikeStep?: number;
+  expiry?: number;
   isCustom?: boolean;
   updatedAt?: number;
 }
@@ -30,6 +31,7 @@ export interface FnoUnderlying {
   sigma: number;
   lotSize: number;
   strikeStep: number;
+  expiry?: number;
   isCustom?: boolean;
 }
 

@@ -320,15 +320,39 @@ export const FNO_UNDERLYINGS_BASE: FnoUnderlying[] = [
 ];
 
 export const EXPIRY_DATE = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+export const DEFAULT_EXPIRY_MS = EXPIRY_DATE.getTime();
 export const RISK_FREE = 0.065;
 export const STARTING_CASH = 1000000;
 
-export function daysToExpiry(): number {
-  return Math.max(1, Math.ceil((EXPIRY_DATE.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+// Pass a specific instrument's expiry (epoch ms) to price it against its own
+// expiry date. Falls back to the global default expiry when omitted, so
+// existing call sites keep working unchanged.
+export function daysToExpiry(expiryMs?: number): number {
+  const target = typeof expiryMs === 'number' ? expiryMs : DEFAULT_EXPIRY_MS;
+  return Math.max(1, Math.ceil((target - Date.now()) / (24 * 60 * 60 * 1000)));
 }
 
-export function futPrice(spot: number): number {
-  return Number((spot * (1 + (RISK_FREE * daysToExpiry()) / 365)).toFixed(2));
+export function formatExpiryDate(expiryMs?: number): string {
+  const target = typeof expiryMs === 'number' ? expiryMs : DEFAULT_EXPIRY_MS;
+  return new Date(target).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+}
+
+// Converts an expiry timestamp into a yyyy-mm-dd string for <input type="date">
+export function expiryToDateInputValue(expiryMs?: number): string {
+  const target = typeof expiryMs === 'number' ? expiryMs : DEFAULT_EXPIRY_MS;
+  const d = new Date(target);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function futPrice(spot: number, expiryMs?: number): number {
+  return Number((spot * (1 + (RISK_FREE * daysToExpiry(expiryMs)) / 365)).toFixed(2));
 }
 
 function erf(x: number): number {
