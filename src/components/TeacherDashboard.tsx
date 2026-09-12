@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock } from 'lucide-react';
+import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock, Printer } from 'lucide-react';
 import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition } from '../types';
 import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, expiryToDateInputValue, RISK_FREE } from '../marketData';
 
@@ -119,6 +119,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       portfolio: st,
       eqValue,
       margin,
+      unrealized,
       netWorth,
       totalTrades
     };
@@ -239,6 +240,176 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Print / export a full trading history report for a single student (all sections)
+  const handlePrintStudentReport = (data: (typeof studentStats)[number]) => {
+    const st = data.portfolio;
+    const generatedAt = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtTime = (t: number) => new Date(t).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+
+    const equityRows = (Object.entries(st.holdings || {}) as [string, Holding][]).map(([sym, h]) => {
+      const stock = allStocks.find(s => s.sym === sym);
+      const ltp = stock ? stock.ltp : h.avgCost;
+      const value = ltp * h.qty;
+      const cost = h.avgCost * h.qty;
+      return { sym, qty: h.qty, avgCost: h.avgCost, ltp, value, pnl: value - cost };
+    });
+
+    const equityTxns = [...(st.transactions || [])].sort((a, b) => b.time - a.time);
+
+    const fnoPositions = (Object.entries(st.fno?.positions || {}) as [string, FnoPosition][])
+      .filter(([, pos]) => pos.lots > 0)
+      .map(([key, pos]) => {
+        const stock = allStocks.find(s => s.sym === pos.underlying);
+        const und = underlyings.find(u => u.sym === pos.underlying);
+        const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
+        const sigma = und?.sigma || 0.25;
+        const cur = pos.kind === 'FUT'
+          ? futPrice(spot, und?.expiry)
+          : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
+        const pnl = pos.side === 'long'
+          ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
+          : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
+        const instrument = pos.kind === 'FUT' ? `${pos.underlying} FUT` : `${pos.underlying} ${pos.strike} ${pos.optType}`;
+        return { key, instrument, side: pos.side, lots: pos.lots, avgPrice: pos.avgPrice, cur, expiry: und?.expiry, margin: pos.margin || 0, pnl };
+      });
+
+    const fnoTxns = [...(st.fno?.transactions || [])].sort((a, b) => b.time - a.time);
+
+    const statusLabel = st.isDeleted ? 'DELETED / INVALID' : st.isFrozen ? 'FROZEN' : 'ACTIVE';
+    const totalPnl = data.netWorth - STARTING_CASH;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Trading Report - ${esc(st.roll)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; color: #111; margin: 32px; font-size: 12px; }
+  h1 { font-size: 20px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #111; padding-bottom: 4px; }
+  .meta { color: #444; font-size: 11px; margin-bottom: 16px; line-height: 1.6; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 20px; }
+  .summary-box { border: 1px solid #999; padding: 8px 10px; }
+  .summary-box .label { font-size: 9px; text-transform: uppercase; color: #666; }
+  .summary-box .value { font-size: 14px; font-weight: bold; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  th, td { border: 1px solid #999; padding: 4px 6px; font-size: 10.5px; text-align: right; }
+  th { background: #eee; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .pos { color: #0a7a34; font-weight: bold; }
+  .neg { color: #b3261e; font-weight: bold; }
+  .empty-note { color: #777; font-style: italic; padding: 8px 0; }
+  .badge { display: inline-block; padding: 2px 8px; border: 1px solid #111; font-size: 10px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
+  footer { margin-top: 30px; font-size: 9px; color: #777; border-top: 1px solid #ccc; padding-top: 8px; }
+  @media print {
+    body { margin: 12mm; }
+    h2 { page-break-after: avoid; }
+    table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+  <h1>Stock War 2026 &mdash; Student Trading Report <span class="badge">${statusLabel}</span></h1>
+  <div class="meta">
+    Roll No: <strong>${esc(st.roll)}</strong> &nbsp;|&nbsp;
+    Name: <strong>${esc(st.studentName || 'N/A')}</strong> &nbsp;|&nbsp;
+    Email: ${esc(st.email || 'N/A')}<br/>
+    Report generated: ${generatedAt}
+  </div>
+
+  <h2>Account Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-box"><div class="label">Starting Cash</div><div class="value">${inr(STARTING_CASH)}</div></div>
+    <div class="summary-box"><div class="label">Cash Balance</div><div class="value">${inr(st.cash || 0)}</div></div>
+    <div class="summary-box"><div class="label">Equity Value</div><div class="value">${inr(data.eqValue)}</div></div>
+    <div class="summary-box"><div class="label">F&amp;O Margin Blocked</div><div class="value">${inr(data.margin)}</div></div>
+    <div class="summary-box"><div class="label">F&amp;O Unrealized P&amp;L</div><div class="value ${data.unrealized >= 0 ? 'pos' : 'neg'}">${data.unrealized >= 0 ? '+' : ''}${inr(data.unrealized)}</div></div>
+    <div class="summary-box"><div class="label">Net Worth</div><div class="value">${inr(data.netWorth)}</div></div>
+    <div class="summary-box"><div class="label">Total P&amp;L</div><div class="value ${totalPnl >= 0 ? 'pos' : 'neg'}">${totalPnl >= 0 ? '+' : ''}${inr(totalPnl)} (${pct((totalPnl / STARTING_CASH) * 100)})</div></div>
+    <div class="summary-box"><div class="label">Total Trades</div><div class="value">${data.totalTrades}</div></div>
+  </div>
+
+  <h2>Equity Holdings (${equityRows.length})</h2>
+  ${equityRows.length ? `
+  <table>
+    <thead><tr><th>Symbol</th><th>Qty</th><th>Avg Cost</th><th>LTP</th><th>Current Value</th><th>P&amp;L</th></tr></thead>
+    <tbody>
+      ${equityRows.map(r => `<tr>
+        <td>${esc(r.sym)}</td><td>${r.qty}</td><td>${inr(r.avgCost)}</td><td>${inr(r.ltp)}</td><td>${inr(r.value)}</td>
+        <td class="${r.pnl >= 0 ? 'pos' : 'neg'}">${r.pnl >= 0 ? '+' : ''}${inr(r.pnl)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : `<div class="empty-note">No equity holdings.</div>`}
+
+  <h2>Equity Trade History (${equityTxns.length})</h2>
+  ${equityTxns.length ? `
+  <table>
+    <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Value</th></tr></thead>
+    <tbody>
+      ${equityTxns.map(t => `<tr>
+        <td>${fmtTime(t.time)}</td><td>${esc(t.sym)}</td>
+        <td class="${t.side === 'buy' ? 'pos' : 'neg'}">${t.side.toUpperCase()}</td>
+        <td>${t.qty}</td><td>${inr(t.price)}</td><td>${inr(t.qty * t.price)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : `<div class="empty-note">No equity trades yet.</div>`}
+
+  <h2>F&amp;O Open Positions (${fnoPositions.length})</h2>
+  ${fnoPositions.length ? `
+  <table>
+    <thead><tr><th>Instrument</th><th>Side</th><th>Lots</th><th>Avg Price</th><th>LTP</th><th>Expiry</th><th>Margin</th><th>Unrealized P&amp;L</th></tr></thead>
+    <tbody>
+      ${fnoPositions.map(p => `<tr>
+        <td>${esc(p.instrument)}</td>
+        <td class="${p.side === 'long' ? 'pos' : 'neg'}">${p.side.toUpperCase()}</td>
+        <td>${p.lots}</td><td>${inr(p.avgPrice)}</td><td>${inr(p.cur)}</td>
+        <td>${formatExpiryDate(p.expiry)}</td><td>${inr(p.margin)}</td>
+        <td class="${p.pnl >= 0 ? 'pos' : 'neg'}">${p.pnl >= 0 ? '+' : ''}${inr(p.pnl)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : `<div class="empty-note">No open F&amp;O positions.</div>`}
+
+  <h2>F&amp;O Trade History (${fnoTxns.length})</h2>
+  ${fnoTxns.length ? `
+  <table>
+    <thead><tr><th>Time</th><th>Instrument</th><th>Side</th><th>Lots</th><th>Price</th><th>Value</th></tr></thead>
+    <tbody>
+      ${fnoTxns.map(t => {
+        const instrument = t.kind === 'FUT' ? `${t.underlying} FUT` : `${t.underlying} ${t.strike} ${t.optType}`;
+        return `<tr>
+          <td>${fmtTime(t.time)}</td><td>${esc(instrument)}</td>
+          <td class="${t.side === 'buy' ? 'pos' : 'neg'}">${t.side.toUpperCase()}</td>
+          <td>${t.lots}</td><td>${inr(t.price)}</td><td>${inr(t.lots * t.price)}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>` : `<div class="empty-note">No F&amp;O trades yet.</div>`}
+
+  <footer>
+    Stock War 2026 Paper Trading Simulation &mdash; This report reflects simulated trading activity only and holds no real monetary value.
+  </footer>
+</body>
+</html>`;
+
+    const printWindow = window.open('', '_blank', 'width=900,height=1000');
+    if (!printWindow) {
+      setActionToast({ message: 'Unable to open the print window. Please allow pop-ups for this site and try again.', type: 'error' });
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      try { printWindow.print(); } catch { /* no-op */ }
+    }, 350);
   };
 
   // Toast auto-clear
@@ -446,6 +617,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5">
+                  {/* Print Full Trading Report Button */}
+                  <button
+                    type="button"
+                    onClick={() => handlePrintStudentReport(currentStudentData)}
+                    className="px-3 py-1.5 bg-[#1F2A33] border border-[#D4A93F] text-[#D4A93F] hover:bg-[#D4A93F] hover:text-[#0A0E14] text-xs uppercase font-bold tracking-wider transition cursor-pointer flex items-center gap-1.5"
+                    title="Print or save a full trading history report for this student"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Full Report
+                  </button>
+
                   {/* Freeze / Unfreeze Button */}
                   {currentStudentData.portfolio.isFrozen ? (
                     <button
@@ -913,6 +1095,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                   title="View portfolio breakdown"
                                 >
                                   View
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintStudentReport(s)}
+                                  className="px-2 py-1 bg-[#1F2A33] border border-[#D4A93F]/60 text-[#D4A93F] hover:bg-[#D4A93F] hover:text-[#0A0E14] font-bold text-xs uppercase cursor-pointer flex items-center gap-1"
+                                  title="Print full trading report"
+                                >
+                                  <Printer className="w-3 h-3" />
                                 </button>
 
                                 {/* Freeze / Unfreeze Action */}
