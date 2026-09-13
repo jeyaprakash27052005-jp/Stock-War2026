@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition } from './types';
 import { INITIAL_STOCKS, FNO_UNDERLYINGS_BASE, inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, RISK_FREE } from './marketData';
 import { 
@@ -57,6 +57,9 @@ export default function App() {
   // Navigation Tab State
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders'>('market');
 
+  // Guards the one-time catalog seed so it only runs once per app load, not on every snapshot
+  const catalogSeededRef = useRef(false);
+
   // 0. Restore session (if any) on first load, via Firebase Auth + Firestore only.
   // No localStorage/sessionStorage is used: the browser keeps an anonymous Firebase Auth
   // identity across refreshes (Firebase's own mechanism), and that identity is used purely
@@ -99,6 +102,38 @@ export default function App() {
   // 1. Subscribe to Firestore Companies (Overrides / Custom Stocks added by Teacher)
   useEffect(() => {
     const unsubscribe = subscribeToCompanies((firestoreCompanies) => {
+      // One-time catalog seed: make sure every default stock, index, and commodity has an
+      // actual document in Firestore - not just the ones a teacher has edited - so the full
+      // company/instrument catalog lives in the database as the single source of truth.
+      if (!catalogSeededRef.current) {
+        catalogSeededRef.current = true;
+        const missingStocks = INITIAL_STOCKS.filter(s => !firestoreCompanies[s.sym]);
+        const missingUnderlyings = FNO_UNDERLYINGS_BASE.filter(u => u.kind !== 'STOCK' && !firestoreCompanies[u.sym]);
+        if (missingStocks.length || missingUnderlyings.length) {
+          Promise.all([
+            ...missingStocks.map(s => saveCompanyToFirestore({
+              sym: s.sym,
+              name: s.name,
+              sector: s.sector,
+              price: s.price,
+              fno: !!s.fno,
+              lotSize: s.lotSize,
+              sigma: s.sigma,
+              strikeStep: s.strikeStep,
+              isCustom: false
+            })),
+            ...missingUnderlyings.map(u => saveCompanyToFirestore({
+              sym: u.sym,
+              name: u.name,
+              sigma: u.sigma,
+              lotSize: u.lotSize,
+              strikeStep: u.strikeStep,
+              isCustom: false
+            }))
+          ]).catch(err => console.warn('Catalog seeding warning:', err));
+        }
+      }
+
       setStocks((prevStocks) => {
         const mergedMap = new Map<string, Stock>();
         
