@@ -12,7 +12,7 @@ import {
   Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Portfolio, Stock } from './types';
+import { Portfolio, Stock, FnoUnderlying } from './types';
 
 export const STARTING_CASH = 1000000;
 
@@ -255,7 +255,9 @@ export async function restoreStudentPortfolioInFirestore(roll: string): Promise<
   });
 }
 
-// =================== FIRESTORE COMPANY OPERATIONS ===================
+// =================== LEGACY: single 'companies' collection ===================
+// Superseded by the separate 'equity_companies' and 'fno_companies' collections below,
+// kept only so a one-time migration can pick up any data written under the old scheme.
 
 export async function fetchCompaniesFromFirestore(): Promise<Record<string, Partial<Stock>>> {
   try {
@@ -267,46 +269,104 @@ export async function fetchCompaniesFromFirestore(): Promise<Record<string, Part
     });
     return map;
   } catch (error) {
-    console.error('Error fetching companies from Firestore:', error);
+    console.error('Error fetching legacy companies from Firestore:', error);
     return {};
   }
 }
 
-export function subscribeToCompanies(onUpdate: (map: Record<string, Partial<Stock>>) => void) {
-  const colRef = collection(db, 'companies');
+function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...obj };
+  Object.keys(copy).forEach((key) => {
+    if (copy[key] === undefined) delete copy[key];
+  });
+  return copy;
+}
+
+// =================== EQUITY COMPANIES (Cash Market segment) ===================
+// One document per tradable stock: symbol, name, sector, price, and whether it
+// also has F&O enabled. This is the full listed-company catalog.
+
+export async function fetchEquityCompaniesFromFirestore(): Promise<Record<string, Partial<Stock>>> {
+  try {
+    const colRef = collection(db, 'equity_companies');
+    const snap = await getDocs(colRef);
+    const map: Record<string, Partial<Stock>> = {};
+    snap.forEach((d) => { map[d.id] = d.data() as Partial<Stock>; });
+    return map;
+  } catch (error) {
+    console.error('Error fetching equity companies from Firestore:', error);
+    return {};
+  }
+}
+
+export function subscribeToEquityCompanies(onUpdate: (map: Record<string, Partial<Stock>>) => void) {
+  const colRef = collection(db, 'equity_companies');
   return onSnapshot(colRef, (snap) => {
     const map: Record<string, Partial<Stock>> = {};
-    snap.forEach((d) => {
-      map[d.id] = d.data() as Partial<Stock>;
-    });
+    snap.forEach((d) => { map[d.id] = d.data() as Partial<Stock>; });
     onUpdate(map);
   }, (err) => {
-    console.warn('Firestore companies subscription warning:', err);
+    console.warn('Firestore equity_companies subscription warning:', err);
   });
 }
 
-export async function saveCompanyToFirestore(stock: Partial<Stock>): Promise<void> {
+export async function saveEquityCompanyToFirestore(stock: Partial<Stock>): Promise<void> {
   if (!stock.sym) return;
-  const docRef = doc(db, 'companies', stock.sym.toUpperCase());
-  const payload: Record<string, unknown> = {
+  const docRef = doc(db, 'equity_companies', stock.sym.toUpperCase());
+  const payload = stripUndefined({
     ...stock,
     sym: stock.sym.toUpperCase(),
     updatedAt: Date.now()
-  };
-  // Firestore's setDoc() rejects the entire write if ANY field is `undefined`
-  // (as opposed to simply omitting it or using null). Since callers commonly
-  // spread a Partial<Stock> that has several unset optional fields (lotSize,
-  // sigma, strikeStep, expiry, etc.), strip those keys out before writing so
-  // a partial update/seed never silently fails because of one unset field.
-  Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined) {
-      delete payload[key];
-    }
   });
   await setDoc(docRef, payload, { merge: true });
 }
 
-export async function deleteCompanyFromFirestore(sym: string): Promise<void> {
-  const docRef = doc(db, 'companies', sym.toUpperCase());
+export async function deleteEquityCompanyFromFirestore(sym: string): Promise<void> {
+  const docRef = doc(db, 'equity_companies', sym.toUpperCase());
+  await deleteDoc(docRef);
+}
+
+// =================== F&O COMPANIES (Derivatives segment) ===================
+// One document per F&O-tradable instrument: indices, commodities, and any stock
+// that has F&O enabled. A stock with F&O on will therefore have a document in
+// BOTH 'equity_companies' (cash market) and 'fno_companies' (derivatives) - just
+// like on a real exchange, where a stock is listed in both segments.
+
+export async function fetchFnoCompaniesFromFirestore(): Promise<Record<string, Partial<FnoUnderlying>>> {
+  try {
+    const colRef = collection(db, 'fno_companies');
+    const snap = await getDocs(colRef);
+    const map: Record<string, Partial<FnoUnderlying>> = {};
+    snap.forEach((d) => { map[d.id] = d.data() as Partial<FnoUnderlying>; });
+    return map;
+  } catch (error) {
+    console.error('Error fetching F&O companies from Firestore:', error);
+    return {};
+  }
+}
+
+export function subscribeToFnoCompanies(onUpdate: (map: Record<string, Partial<FnoUnderlying>>) => void) {
+  const colRef = collection(db, 'fno_companies');
+  return onSnapshot(colRef, (snap) => {
+    const map: Record<string, Partial<FnoUnderlying>> = {};
+    snap.forEach((d) => { map[d.id] = d.data() as Partial<FnoUnderlying>; });
+    onUpdate(map);
+  }, (err) => {
+    console.warn('Firestore fno_companies subscription warning:', err);
+  });
+}
+
+export async function saveFnoCompanyToFirestore(data: Partial<FnoUnderlying> & { sym: string }): Promise<void> {
+  const docRef = doc(db, 'fno_companies', data.sym.toUpperCase());
+  const payload = stripUndefined({
+    ...data,
+    sym: data.sym.toUpperCase(),
+    updatedAt: Date.now()
+  });
+  await setDoc(docRef, payload, { merge: true });
+}
+
+export async function deleteFnoCompanyFromFirestore(sym: string): Promise<void> {
+  const docRef = doc(db, 'fno_companies', sym.toUpperCase());
   await deleteDoc(docRef);
 }

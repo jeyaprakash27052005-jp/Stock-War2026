@@ -11,9 +11,15 @@ import {
   deleteStudentPortfolioInFirestore,
   purgeStudentPortfolioFromFirestore,
   restoreStudentPortfolioInFirestore,
-  subscribeToCompanies,
-  saveCompanyToFirestore,
-  deleteCompanyFromFirestore,
+  fetchCompaniesFromFirestore,
+  fetchEquityCompaniesFromFirestore,
+  subscribeToEquityCompanies,
+  saveEquityCompanyToFirestore,
+  deleteEquityCompanyFromFirestore,
+  fetchFnoCompaniesFromFirestore,
+  subscribeToFnoCompanies,
+  saveFnoCompanyToFirestore,
+  deleteFnoCompanyFromFirestore,
   defaultPortfolio,
   logOutUser,
   ensureAnonymousAuth,
@@ -99,69 +105,110 @@ export default function App() {
     };
   }, []);
 
-  // 1. Subscribe to Firestore Companies (Overrides / Custom Stocks added by Teacher)
+  // 1a. One-time catalog seed + legacy migration: make sure every default stock, index,
+  // and commodity has an actual document in the new split collections, and pull in
+  // anything that was previously written under the old single 'companies' collection.
   useEffect(() => {
-    const unsubscribe = subscribeToCompanies((firestoreCompanies) => {
-      // One-time catalog seed: make sure every default stock, index, and commodity has an
-      // actual document in Firestore - not just the ones a teacher has edited - so the full
-      // company/instrument catalog lives in the database as the single source of truth.
-      if (!catalogSeededRef.current) {
-        catalogSeededRef.current = true;
-        const missingStocks = INITIAL_STOCKS.filter(s => !firestoreCompanies[s.sym]);
-        const missingUnderlyings = FNO_UNDERLYINGS_BASE.filter(u => u.kind !== 'STOCK' && !firestoreCompanies[u.sym]);
-        if (missingStocks.length || missingUnderlyings.length) {
-          const seedTasks = [
-            ...missingStocks.map(s => ({
+    if (catalogSeededRef.current) return;
+    catalogSeededRef.current = true;
+
+    (async () => {
+      try {
+        const [legacy, equityDocs, fnoDocs] = await Promise.all([
+          fetchCompaniesFromFirestore(),
+          fetchEquityCompaniesFromFirestore(),
+          fetchFnoCompaniesFromFirestore()
+        ]);
+
+        const equityTasks: { sym: string; payload: Partial<Stock> }[] = [];
+        const fnoTasks: { sym: string; payload: Partial<FnoUnderlying> & { sym: string } }[] = [];
+
+        // Migrate anything sitting in the old 'companies' collection that hasn't
+        // already been copied into the new collections.
+        Object.entries(legacy).forEach(([sym, data]) => {
+          if (data.isDeleted) return;
+          if (!equityDocs[sym] && data.name && data.sector && typeof data.price === 'number') {
+            equityTasks.push({
+              sym,
+              payload: {
+                sym, name: data.name, sector: data.sector, price: data.price,
+                fno: !!data.fno, lotSize: data.lotSize, sigma: data.sigma,
+                strikeStep: data.strikeStep, isCustom: data.isCustom ?? true
+              }
+            });
+          }
+          if (!fnoDocs[sym] && data.fno) {
+            fnoTasks.push({
+              sym,
+              payload: {
+                sym, name: data.name || sym, kind: 'STOCK',
+                sigma: data.sigma ?? 0.25, lotSize: data.lotSize ?? 100,
+                strikeStep: data.strikeStep ?? Math.max(5, Math.round((data.price || 1000) * 0.02)),
+                expiry: data.expiry, isCustom: true
+              }
+            });
+          }
+        });
+
+        // Seed the built-in defaults for anything still missing after migration.
+        INITIAL_STOCKS.forEach(s => {
+          if (!equityDocs[s.sym] && !equityTasks.some(t => t.sym === s.sym)) {
+            equityTasks.push({
               sym: s.sym,
               payload: {
-                sym: s.sym,
-                name: s.name,
-                sector: s.sector,
-                price: s.price,
-                fno: !!s.fno,
-                lotSize: s.lotSize,
-                sigma: s.sigma,
-                strikeStep: s.strikeStep,
-                isCustom: false
+                sym: s.sym, name: s.name, sector: s.sector, price: s.price,
+                fno: !!s.fno, lotSize: s.lotSize, sigma: s.sigma,
+                strikeStep: s.strikeStep, isCustom: false
               }
-            })),
-            ...missingUnderlyings.map(u => ({
+            });
+          }
+        });
+        FNO_UNDERLYINGS_BASE.filter(u => u.kind !== 'STOCK').forEach(u => {
+          if (!fnoDocs[u.sym] && !fnoTasks.some(t => t.sym === u.sym)) {
+            fnoTasks.push({
               sym: u.sym,
               payload: {
-                sym: u.sym,
-                name: u.name,
-                sigma: u.sigma,
-                lotSize: u.lotSize,
-                strikeStep: u.strikeStep,
-                isCustom: false
+                sym: u.sym, name: u.name, kind: u.kind,
+                sigma: u.sigma, lotSize: u.lotSize, strikeStep: u.strikeStep, isCustom: false
               }
-            }))
-          ];
-          Promise.allSettled(seedTasks.map(t => saveCompanyToFirestore(t.payload))).then(results => {
-            const failed = results
-              .map((r, i) => ({ r, sym: seedTasks[i].sym }))
-              .filter(({ r }) => r.status === 'rejected');
-            if (failed.length) {
-              console.warn(
-                `Catalog seeding: ${failed.length}/${seedTasks.length} instrument(s) failed to write to Firestore:`,
-                failed.map(f => f.sym).join(', '),
-                (failed[0].r as PromiseRejectedResult).reason
-              );
-              // Allow a retry on the next full page load for whichever ones failed
-              catalogSeededRef.current = false;
-            }
-          });
-        }
-      }
+            });
+          }
+        });
 
+        const allTasks = [
+          ...equityTasks.map(t => ({ sym: t.sym, run: () => saveEquityCompanyToFirestore(t.payload) })),
+          ...fnoTasks.map(t => ({ sym: t.sym, run: () => saveFnoCompanyToFirestore(t.payload) }))
+        ];
+
+        if (allTasks.length) {
+          const results = await Promise.allSettled(allTasks.map(t => t.run()));
+          const failed = results
+            .map((r, i) => ({ r, sym: allTasks[i].sym }))
+            .filter(({ r }) => r.status === 'rejected');
+          if (failed.length) {
+            console.warn(
+              `Catalog seeding: ${failed.length}/${allTasks.length} instrument(s) failed to write to Firestore:`,
+              failed.map(f => f.sym).join(', '),
+              (failed[0].r as PromiseRejectedResult).reason
+            );
+            catalogSeededRef.current = false; // retry on next full page load
+          }
+        }
+      } catch (err) {
+        console.warn('Catalog seeding/migration warning:', err);
+        catalogSeededRef.current = false;
+      }
+    })();
+  }, []);
+
+  // 1b. Subscribe to Firestore Equity Companies (cash market catalog, teacher-editable)
+  useEffect(() => {
+    const unsubscribe = subscribeToEquityCompanies((firestoreEquity) => {
       setStocks((prevStocks) => {
         const mergedMap = new Map<string, Stock>();
-        
-        // Base seed stocks
         prevStocks.forEach(s => mergedMap.set(s.sym, s));
 
-        // Apply firestore updates or add new stocks
-        Object.entries(firestoreCompanies).forEach(([sym, fsData]) => {
+        Object.entries(firestoreEquity).forEach(([sym, fsData]) => {
           if (fsData.isDeleted) {
             mergedMap.delete(sym);
             return;
@@ -199,41 +246,55 @@ export default function App() {
 
         return Array.from(mergedMap.values());
       });
+    });
 
-      // Update F&O Underlyings
+    return () => unsubscribe();
+  }, []);
+
+  // 1c. Subscribe to Firestore F&O Companies (derivatives catalog: indices, commodities,
+  // and any stock with F&O enabled - teacher-editable)
+  useEffect(() => {
+    const unsubscribe = subscribeToFnoCompanies((firestoreFno) => {
       setUnderlyings((prevUnd) => {
         const undMap = new Map<string, FnoUnderlying>();
         prevUnd.forEach(u => undMap.set(u.sym, u));
 
-        Object.entries(firestoreCompanies).forEach(([sym, fsData]) => {
+        // A custom/stock-linked instrument whose Firestore document has been physically
+        // deleted (not just flagged) will simply be absent from the new snapshot map -
+        // remove any such stale entries. Base indices/commodities are never removed here.
+        undMap.forEach((u, sym) => {
+          if (u.isCustom && !firestoreFno[sym] && !FNO_UNDERLYINGS_BASE.some(b => b.sym === sym)) {
+            undMap.delete(sym);
+          }
+        });
+
+        Object.entries(firestoreFno).forEach(([sym, fsData]) => {
           if (fsData.isDeleted) {
             undMap.delete(sym);
             return;
           }
-          if (undMap.has(sym)) {
-            const existing = undMap.get(sym)!;
+          const existing = undMap.get(sym);
+          if (existing) {
             undMap.set(sym, {
               ...existing,
               name: fsData.name || existing.name,
-              spot: typeof fsData.price === 'number' ? fsData.price : (typeof fsData.ltp === 'number' ? fsData.ltp : existing.spot),
+              spot: typeof fsData.spot === 'number' ? fsData.spot : existing.spot,
               sigma: fsData.sigma !== undefined ? fsData.sigma : existing.sigma,
               lotSize: fsData.lotSize !== undefined ? fsData.lotSize : existing.lotSize,
               strikeStep: fsData.strikeStep !== undefined ? fsData.strikeStep : existing.strikeStep,
               expiry: fsData.expiry !== undefined ? fsData.expiry : existing.expiry
             });
-          } else if (fsData.fno) {
+          } else if (fsData.kind) {
             undMap.set(sym, {
               sym,
               name: fsData.name || sym,
-              kind: 'STOCK',
-              sigma: fsData.sigma || 0.25,
-              lotSize: fsData.lotSize || 100,
-              strikeStep: fsData.strikeStep || Math.max(5, Math.round((fsData.price || 1000) * 0.02)),
+              kind: fsData.kind,
+              sigma: fsData.sigma ?? 0.25,
+              lotSize: fsData.lotSize ?? 100,
+              strikeStep: fsData.strikeStep ?? 20,
               expiry: fsData.expiry,
               isCustom: true
             });
-          } else if (fsData.fno === false && undMap.has(sym) && undMap.get(sym)?.isCustom) {
-            undMap.delete(sym);
           }
         });
 
@@ -689,43 +750,89 @@ export default function App() {
   };
 
   // Teacher updates company or instrument in Firestore & local state
+  // Teacher updates a company: equity-side fields go to 'equity_companies',
+  // F&O-side fields go to 'fno_companies'. If F&O is switched off, its
+  // derivatives-segment document is removed entirely.
   const handleUpdateCompany = async (sym: string, updates: Partial<Stock>) => {
     const normalized = sym.toUpperCase();
-    await saveCompanyToFirestore({ sym: normalized, ...updates });
+    const { lotSize, sigma, strikeStep, ...equityFields } = updates;
+
+    await saveEquityCompanyToFirestore({ sym: normalized, ...equityFields });
+
+    if (updates.fno === false) {
+      await deleteFnoCompanyFromFirestore(normalized);
+    } else if (updates.fno === true || lotSize !== undefined || sigma !== undefined || strikeStep !== undefined) {
+      await saveFnoCompanyToFirestore({
+        sym: normalized,
+        name: updates.name,
+        kind: 'STOCK',
+        lotSize,
+        sigma,
+        strikeStep,
+        isCustom: true
+      });
+    }
+
     setStocks(prev => prev.map(s => s.sym === normalized ? { ...s, ...updates } : s));
-    setUnderlyings(prev => prev.map(u => {
-      if (u.sym === normalized) {
-        return {
-          ...u,
-          name: updates.name || u.name,
-          spot: typeof updates.price === 'number' ? updates.price : (typeof updates.ltp === 'number' ? updates.ltp : u.spot),
-          sigma: updates.sigma !== undefined ? updates.sigma : u.sigma,
-          lotSize: updates.lotSize !== undefined ? updates.lotSize : u.lotSize,
-          strikeStep: updates.strikeStep !== undefined ? updates.strikeStep : u.strikeStep,
-          expiry: updates.expiry !== undefined ? updates.expiry : u.expiry
-        };
-      }
-      return u;
-    }));
+    if (updates.fno === false) {
+      setUnderlyings(prev => prev.filter(u => !(u.sym === normalized && u.isCustom)));
+    } else {
+      setUnderlyings(prev => prev.map(u => {
+        if (u.sym === normalized) {
+          return {
+            ...u,
+            name: updates.name || u.name,
+            spot: typeof updates.price === 'number' ? updates.price : (typeof updates.ltp === 'number' ? updates.ltp : u.spot),
+            sigma: updates.sigma !== undefined ? updates.sigma : u.sigma,
+            lotSize: updates.lotSize !== undefined ? updates.lotSize : u.lotSize,
+            strikeStep: updates.strikeStep !== undefined ? updates.strikeStep : u.strikeStep
+          };
+        }
+        return u;
+      }));
+    }
   };
 
   // Teacher sets/edits the expiry date for any F&O underlying (stock, index, or commodity)
+  // - always lives in the derivatives-segment collection.
   const handleUpdateUnderlyingExpiry = async (sym: string, expiry: number) => {
     const normalized = sym.toUpperCase();
-    await saveCompanyToFirestore({ sym: normalized, expiry });
+    const existing = underlyings.find(u => u.sym === normalized);
+    await saveFnoCompanyToFirestore({
+      sym: normalized,
+      name: existing?.name,
+      kind: existing?.kind,
+      sigma: existing?.sigma,
+      lotSize: existing?.lotSize,
+      strikeStep: existing?.strikeStep,
+      expiry
+    });
     setUnderlyings(prev => prev.map(u => u.sym === normalized ? { ...u, expiry } : u));
   };
 
-  // Teacher adds new company to Firestore
+  // Teacher adds a new company: always creates the equity-segment document;
+  // also creates the derivatives-segment document if F&O is enabled for it.
   const handleAddCompany = async (stock: Partial<Stock>) => {
-    await saveCompanyToFirestore(stock);
+    const { lotSize, sigma, strikeStep, ...equityFields } = stock;
+    await saveEquityCompanyToFirestore({ ...equityFields, fno: !!stock.fno });
+    if (stock.fno && stock.sym) {
+      await saveFnoCompanyToFirestore({
+        sym: stock.sym,
+        name: stock.name,
+        kind: 'STOCK',
+        lotSize,
+        sigma,
+        strikeStep,
+        isCustom: true
+      });
+    }
   };
 
-  // Teacher deletes company or instrument from Firestore & local state
+  // Teacher deletes a company or instrument from both segments & local state
   const handleDeleteCompany = async (sym: string) => {
     const normalized = sym.toUpperCase();
-    await saveCompanyToFirestore({ sym: normalized, isDeleted: true });
-    await deleteCompanyFromFirestore(normalized);
+    await deleteEquityCompanyFromFirestore(normalized);
+    await deleteFnoCompanyFromFirestore(normalized);
     setStocks(prev => prev.filter(s => s.sym !== normalized));
     setUnderlyings(prev => prev.filter(u => u.sym !== normalized));
   };

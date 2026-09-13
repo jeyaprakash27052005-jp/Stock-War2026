@@ -17,6 +17,7 @@ export interface Stock {
   expiry?: number;
   isCustom?: boolean;
   updatedAt?: number;
+  isDeleted?: boolean;
 }
 
 export interface FnoUnderlying {
@@ -33,6 +34,8 @@ export interface FnoUnderlying {
   strikeStep: number;
   expiry?: number;
   isCustom?: boolean;
+  isDeleted?: boolean;
+  updatedAt?: number;
 }
 
 export interface Holding {
