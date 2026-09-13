@@ -28,6 +28,47 @@ import { CandleChart } from './components/CandleChart';
 import { OrderHistory } from './components/OrderHistory';
 import { TeacherDashboard } from './components/TeacherDashboard';
 
+// Persist the logged-in session across page refreshes (not across logout or a
+// different browser/device — this only survives a reload of the same tab/browser).
+const SESSION_STORAGE_KEY = 'paperfloor_session_v1';
+
+interface StoredSession {
+  userRole: 'student' | 'teacher';
+  currentRoll: string;
+  studentName: string;
+  userEmail: string;
+}
+
+function saveSessionToStorage(session: StoredSession) {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    // localStorage may be unavailable (e.g. private browsing) - fail silently, login still works
+  }
+}
+
+function loadSessionFromStorage(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.userRole === 'student' || parsed.userRole === 'teacher') && typeof parsed.currentRoll === 'string') {
+      return parsed as StoredSession;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function clearSessionFromStorage() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function App() {
   // Market State
   const [stocks, setStocks] = useState<Stock[]>(INITIAL_STOCKS);
@@ -40,6 +81,7 @@ export default function App() {
   const [currentRoll, setCurrentRoll] = useState<string>('');
   const [studentName, setStudentName] = useState<string>('');
   const [userEmail, setUserEmail] = useState<string>('');
+  const [sessionRestored, setSessionRestored] = useState(false);
   
   // Student Portfolio State
   const [portfolio, setPortfolio] = useState<Portfolio>(defaultPortfolio(''));
@@ -49,6 +91,21 @@ export default function App() {
 
   // Navigation Tab State
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders'>('market');
+
+  // 0. Restore session (if any) on first load, so refreshing the page doesn't log the user out
+  useEffect(() => {
+    const stored = loadSessionFromStorage();
+    if (stored) {
+      setCurrentRoll(stored.currentRoll);
+      setStudentName(stored.studentName);
+      setUserEmail(stored.userEmail);
+      setUserRole(stored.userRole);
+      if (stored.userRole === 'student') {
+        setActiveTab('market');
+      }
+    }
+    setSessionRestored(true);
+  }, []);
 
   // 1. Subscribe to Firestore Companies (Overrides / Custom Stocks added by Teacher)
   useEffect(() => {
@@ -295,6 +352,7 @@ export default function App() {
     setPortfolio(loaded);
     setUserRole('student');
     setActiveTab('market');
+    saveSessionToStorage({ userRole: 'student', currentRoll: normalized, studentName: name || normalized, userEmail: email || '' });
   };
 
   // Teacher Login Handler
@@ -303,6 +361,7 @@ export default function App() {
     setStudentName(name || 'Course Instructor');
     setUserEmail(email || '');
     setUserRole('teacher');
+    saveSessionToStorage({ userRole: 'teacher', currentRoll: 'INSTRUCTOR', studentName: name || 'Course Instructor', userEmail: email || '' });
   };
 
   // Logout Handler
@@ -312,6 +371,7 @@ export default function App() {
     } catch {
       // ignore
     }
+    clearSessionFromStorage();
     setUserRole(null);
     setCurrentRoll('');
     setStudentName('');
@@ -633,7 +693,13 @@ export default function App() {
       <Ticker stocks={stocks} indices={indices} commodities={commodities} />
 
       {/* Main View */}
-      {!userRole ? (
+      {!sessionRestored ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-[#6B7680] text-xs uppercase tracking-wider font-mono animate-pulse">
+            Restoring session...
+          </div>
+        </div>
+      ) : !userRole ? (
         <LoginView
           onStudentLogin={handleStudentLogin}
           onTeacherLogin={handleTeacherLogin}
