@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -52,6 +52,51 @@ export async function signInWithGoogle(): Promise<FirebaseUser> {
 
 export async function logOutUser(): Promise<void> {
   await signOut(auth);
+}
+
+// =================== SESSION PERSISTENCE (Firestore-backed, no localStorage) ===================
+// A page refresh keeps the same browser tied to an anonymous Firebase Auth identity
+// (Firebase handles that hand-off internally). We use that identity purely as a lookup
+// key into a Firestore 'sessions' collection, which is the actual source of truth for
+// who is logged in - nothing about the session itself is kept in localStorage.
+
+export interface SessionRecord {
+  role: 'student' | 'teacher';
+  roll: string;
+  studentName: string;
+  email: string;
+  updatedAt: number;
+}
+
+// Ensures the current browser has a Firebase Auth identity, signing in anonymously if needed.
+// Returns the uid to use as the session's Firestore document key.
+export async function ensureAnonymousAuth(): Promise<string> {
+  if (auth.currentUser) return auth.currentUser.uid;
+  const cred = await signInAnonymously(auth);
+  return cred.user.uid;
+}
+
+// Fires once Firebase Auth has resolved whether this browser already has an identity.
+export function onAuthReady(callback: (uid: string | null) => void) {
+  return onAuthStateChanged(auth, (user) => {
+    callback(user ? user.uid : null);
+  });
+}
+
+export async function saveSessionToFirestore(uid: string, session: SessionRecord): Promise<void> {
+  const docRef = doc(db, 'sessions', uid);
+  await setDoc(docRef, session);
+}
+
+export async function loadSessionFromFirestore(uid: string): Promise<SessionRecord | null> {
+  const docRef = doc(db, 'sessions', uid);
+  const snap = await getDoc(docRef);
+  return snap.exists() ? (snap.data() as SessionRecord) : null;
+}
+
+export async function clearSessionFromFirestore(uid: string): Promise<void> {
+  const docRef = doc(db, 'sessions', uid);
+  await deleteDoc(docRef);
 }
 
 // =================== FIRESTORE PORTFOLIO OPERATIONS ===================

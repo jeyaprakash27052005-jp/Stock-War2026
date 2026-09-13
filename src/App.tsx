@@ -15,7 +15,13 @@ import {
   saveCompanyToFirestore,
   deleteCompanyFromFirestore,
   defaultPortfolio,
-  logOutUser
+  logOutUser,
+  ensureAnonymousAuth,
+  onAuthReady,
+  saveSessionToFirestore,
+  loadSessionFromFirestore,
+  clearSessionFromFirestore,
+  auth
 } from './firebase';
 
 import { Ticker } from './components/Ticker';
@@ -27,47 +33,6 @@ import { FnoSection } from './components/FnoSection';
 import { CandleChart } from './components/CandleChart';
 import { OrderHistory } from './components/OrderHistory';
 import { TeacherDashboard } from './components/TeacherDashboard';
-
-// Persist the logged-in session across page refreshes (not across logout or a
-// different browser/device — this only survives a reload of the same tab/browser).
-const SESSION_STORAGE_KEY = 'paperfloor_session_v1';
-
-interface StoredSession {
-  userRole: 'student' | 'teacher';
-  currentRoll: string;
-  studentName: string;
-  userEmail: string;
-}
-
-function saveSessionToStorage(session: StoredSession) {
-  try {
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-  } catch {
-    // localStorage may be unavailable (e.g. private browsing) - fail silently, login still works
-  }
-}
-
-function loadSessionFromStorage(): StoredSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && (parsed.userRole === 'student' || parsed.userRole === 'teacher') && typeof parsed.currentRoll === 'string') {
-      return parsed as StoredSession;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function clearSessionFromStorage() {
-  try {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
-}
 
 export default function App() {
   // Market State
@@ -92,19 +57,43 @@ export default function App() {
   // Navigation Tab State
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders'>('market');
 
-  // 0. Restore session (if any) on first load, so refreshing the page doesn't log the user out
+  // 0. Restore session (if any) on first load, via Firebase Auth + Firestore only.
+  // No localStorage/sessionStorage is used: the browser keeps an anonymous Firebase Auth
+  // identity across refreshes (Firebase's own mechanism), and that identity is used purely
+  // as a lookup key into the 'sessions' collection in Firestore, which is the actual source
+  // of truth for who is logged in.
   useEffect(() => {
-    const stored = loadSessionFromStorage();
-    if (stored) {
-      setCurrentRoll(stored.currentRoll);
-      setStudentName(stored.studentName);
-      setUserEmail(stored.userEmail);
-      setUserRole(stored.userRole);
-      if (stored.userRole === 'student') {
-        setActiveTab('market');
+    let cancelled = false;
+
+    const restore = async (uid: string | null) => {
+      try {
+        const activeUid = uid || (await ensureAnonymousAuth());
+        const session = await loadSessionFromFirestore(activeUid);
+        if (cancelled) return;
+        if (session) {
+          setCurrentRoll(session.roll);
+          setStudentName(session.studentName);
+          setUserEmail(session.email);
+          setUserRole(session.role);
+          if (session.role === 'student') {
+            setActiveTab('market');
+          }
+        }
+      } catch (err) {
+        console.warn('Session restore warning:', err);
+      } finally {
+        if (!cancelled) setSessionRestored(true);
       }
-    }
-    setSessionRestored(true);
+    };
+
+    const unsubscribe = onAuthReady((uid) => {
+      restore(uid);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   // 1. Subscribe to Firestore Companies (Overrides / Custom Stocks added by Teacher)
@@ -352,7 +341,20 @@ export default function App() {
     setPortfolio(loaded);
     setUserRole('student');
     setActiveTab('market');
-    saveSessionToStorage({ userRole: 'student', currentRoll: normalized, studentName: name || normalized, userEmail: email || '' });
+    // Best-effort: persist the session in Firestore so a page refresh restores it.
+    // Login itself must never fail just because this secondary step fails.
+    try {
+      const uid = await ensureAnonymousAuth();
+      await saveSessionToFirestore(uid, {
+        role: 'student',
+        roll: normalized,
+        studentName: name || normalized,
+        email: email || '',
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.warn('Could not persist session to Firestore (refresh will require re-login):', err);
+    }
   };
 
   // Teacher Login Handler
@@ -361,17 +363,34 @@ export default function App() {
     setStudentName(name || 'Course Instructor');
     setUserEmail(email || '');
     setUserRole('teacher');
-    saveSessionToStorage({ userRole: 'teacher', currentRoll: 'INSTRUCTOR', studentName: name || 'Course Instructor', userEmail: email || '' });
+    try {
+      const uid = await ensureAnonymousAuth();
+      await saveSessionToFirestore(uid, {
+        role: 'teacher',
+        roll: 'INSTRUCTOR',
+        studentName: name || 'Course Instructor',
+        email: email || '',
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.warn('Could not persist session to Firestore (refresh will require re-login):', err);
+    }
   };
 
   // Logout Handler
   const handleLogout = async () => {
     try {
+      if (auth.currentUser) {
+        await clearSessionFromFirestore(auth.currentUser.uid);
+      }
+    } catch {
+      // ignore - logging out should still proceed even if the Firestore cleanup fails
+    }
+    try {
       await logOutUser();
     } catch {
       // ignore
     }
-    clearSessionFromStorage();
     setUserRole(null);
     setCurrentRoll('');
     setStudentName('');
