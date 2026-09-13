@@ -288,11 +288,22 @@ export function subscribeToCompanies(onUpdate: (map: Record<string, Partial<Stoc
 export async function saveCompanyToFirestore(stock: Partial<Stock>): Promise<void> {
   if (!stock.sym) return;
   const docRef = doc(db, 'companies', stock.sym.toUpperCase());
-  await setDoc(docRef, {
+  const payload: Record<string, unknown> = {
     ...stock,
     sym: stock.sym.toUpperCase(),
     updatedAt: Date.now()
-  }, { merge: true });
+  };
+  // Firestore's setDoc() rejects the entire write if ANY field is `undefined`
+  // (as opposed to simply omitting it or using null). Since callers commonly
+  // spread a Partial<Stock> that has several unset optional fields (lotSize,
+  // sigma, strikeStep, expiry, etc.), strip those keys out before writing so
+  // a partial update/seed never silently fails because of one unset field.
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined) {
+      delete payload[key];
+    }
+  });
+  await setDoc(docRef, payload, { merge: true });
 }
 
 export async function deleteCompanyFromFirestore(sym: string): Promise<void> {

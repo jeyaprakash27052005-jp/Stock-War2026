@@ -110,27 +110,47 @@ export default function App() {
         const missingStocks = INITIAL_STOCKS.filter(s => !firestoreCompanies[s.sym]);
         const missingUnderlyings = FNO_UNDERLYINGS_BASE.filter(u => u.kind !== 'STOCK' && !firestoreCompanies[u.sym]);
         if (missingStocks.length || missingUnderlyings.length) {
-          Promise.all([
-            ...missingStocks.map(s => saveCompanyToFirestore({
+          const seedTasks = [
+            ...missingStocks.map(s => ({
               sym: s.sym,
-              name: s.name,
-              sector: s.sector,
-              price: s.price,
-              fno: !!s.fno,
-              lotSize: s.lotSize,
-              sigma: s.sigma,
-              strikeStep: s.strikeStep,
-              isCustom: false
+              payload: {
+                sym: s.sym,
+                name: s.name,
+                sector: s.sector,
+                price: s.price,
+                fno: !!s.fno,
+                lotSize: s.lotSize,
+                sigma: s.sigma,
+                strikeStep: s.strikeStep,
+                isCustom: false
+              }
             })),
-            ...missingUnderlyings.map(u => saveCompanyToFirestore({
+            ...missingUnderlyings.map(u => ({
               sym: u.sym,
-              name: u.name,
-              sigma: u.sigma,
-              lotSize: u.lotSize,
-              strikeStep: u.strikeStep,
-              isCustom: false
+              payload: {
+                sym: u.sym,
+                name: u.name,
+                sigma: u.sigma,
+                lotSize: u.lotSize,
+                strikeStep: u.strikeStep,
+                isCustom: false
+              }
             }))
-          ]).catch(err => console.warn('Catalog seeding warning:', err));
+          ];
+          Promise.allSettled(seedTasks.map(t => saveCompanyToFirestore(t.payload))).then(results => {
+            const failed = results
+              .map((r, i) => ({ r, sym: seedTasks[i].sym }))
+              .filter(({ r }) => r.status === 'rejected');
+            if (failed.length) {
+              console.warn(
+                `Catalog seeding: ${failed.length}/${seedTasks.length} instrument(s) failed to write to Firestore:`,
+                failed.map(f => f.sym).join(', '),
+                (failed[0].r as PromiseRejectedResult).reason
+              );
+              // Allow a retry on the next full page load for whichever ones failed
+              catalogSeededRef.current = false;
+            }
+          });
         }
       }
 
