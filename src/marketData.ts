@@ -351,6 +351,23 @@ export function expiryToDateInputValue(expiryMs?: number): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// Given an instrument's list of simultaneous expiry series (weekly + monthly, etc.),
+// returns the soonest one that hasn't passed yet - or the earliest of all of them if
+// every one has already passed - or the global default if the list is empty/missing.
+export function getNearestExpiry(expiries?: number[]): number {
+  if (!expiries || expiries.length === 0) return DEFAULT_EXPIRY_MS;
+  const now = Date.now();
+  const future = expiries.filter(e => e >= now).sort((a, b) => a - b);
+  if (future.length > 0) return future[0];
+  return [...expiries].sort((a, b) => a - b)[0];
+}
+
+// Sorted ascending, de-duplicated
+export function sortExpiries(expiries?: number[]): number[] {
+  if (!expiries || expiries.length === 0) return [];
+  return Array.from(new Set(expiries)).sort((a, b) => a - b);
+}
+
 export function futPrice(spot: number, expiryMs?: number): number {
   return Number((spot * (1 + (RISK_FREE * daysToExpiry(expiryMs)) / 365)).toFixed(2));
 }

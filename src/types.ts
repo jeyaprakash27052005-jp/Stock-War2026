@@ -32,7 +32,9 @@ export interface FnoUnderlying {
   sigma: number;
   lotSize: number;
   strikeStep: number;
-  expiry?: number;
+  // Multiple simultaneous expiry series (e.g. weekly + monthly), same as a real exchange.
+  // Adding a new one never removes an existing one - only an explicit remove does that.
+  expiries?: number[];
   isCustom?: boolean;
   isDeleted?: boolean;
   updatedAt?: number;
@@ -48,6 +50,7 @@ export interface FnoPosition {
   underlying: string;
   strike?: number | null;
   optType?: 'CE' | 'PE' | null;
+  expiry: number;
   lotSize: number;
   side: 'long' | 'short';
   lots: number;
@@ -69,6 +72,7 @@ export interface FnoTransaction {
   underlying: string;
   strike?: number | null;
   optType?: 'CE' | 'PE' | null;
+  expiry: number;
   side: 'buy' | 'sell';
   lots: number;
   price: number;

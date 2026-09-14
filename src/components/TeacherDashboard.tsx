@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock, Printer } from 'lucide-react';
 import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition } from '../types';
-import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, expiryToDateInputValue, RISK_FREE } from '../marketData';
+import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, sortExpiries, RISK_FREE } from '../marketData';
 
 interface TeacherDashboardProps {
   students: Portfolio[];
@@ -16,6 +16,7 @@ interface TeacherDashboardProps {
   onAddCompany: (stock: Partial<Stock>) => Promise<void>;
   onDeleteCompany: (sym: string) => Promise<void>;
   onUpdateUnderlyingExpiry: (sym: string, expiry: number) => Promise<void>;
+  onRemoveUnderlyingExpiry: (sym: string, expiry: number) => Promise<void>;
 }
 
 interface ActionModalConfig {
@@ -40,7 +41,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onUpdateCompany,
   onAddCompany,
   onDeleteCompany,
-  onUpdateUnderlyingExpiry
+  onUpdateUnderlyingExpiry,
+  onRemoveUnderlyingExpiry
 }) => {
   const [activeTab, setActiveTab] = useState<'students' | 'companies' | 'expiry'>('students');
   const [selectedStudentRoll, setSelectedStudentRoll] = useState<string | null>(null);
@@ -105,8 +107,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
       const sigma = und?.sigma || 0.25;
       const cur = pos.kind === 'FUT'
-        ? futPrice(spot, und?.expiry)
-        : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
+        ? futPrice(spot, pos.expiry)
+        : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
       const pnl = pos.side === 'long'
         ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
         : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -299,13 +301,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
         const sigma = und?.sigma || 0.25;
         const cur = pos.kind === 'FUT'
-          ? futPrice(spot, und?.expiry)
-          : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
+          ? futPrice(spot, pos.expiry)
+          : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
         const pnl = pos.side === 'long'
           ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
           : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
         const instrument = pos.kind === 'FUT' ? `${pos.underlying} FUT` : `${pos.underlying} ${pos.strike} ${pos.optType}`;
-        return { key, instrument, side: pos.side, lots: pos.lots, avgPrice: pos.avgPrice, cur, expiry: und?.expiry, margin: pos.margin || 0, pnl };
+        return { key, instrument, side: pos.side, lots: pos.lots, avgPrice: pos.avgPrice, cur, expiry: pos.expiry, margin: pos.margin || 0, pnl };
       });
 
     const fnoTxns = [...(st.fno?.transactions || [])].sort((a, b) => b.time - a.time);
@@ -489,8 +491,9 @@ ${bodyHtml}
     }
   }, [expiryToast]);
 
-  // Teacher sets/updates the expiry date for one F&O instrument (stock, index or commodity)
-  const handleSaveExpiry = async (sym: string, dateValue: string) => {
+  // Teacher adds a new expiry series for one F&O instrument (stock, index or commodity).
+  // This only ADDS - it never removes or replaces any expiry series already set.
+  const handleAddExpiry = async (sym: string, dateValue: string) => {
     if (!dateValue) {
       setExpiryToast({ sym, message: 'Pick a valid date first.', type: 'error' });
       return;
@@ -504,9 +507,23 @@ ${bodyHtml}
     setSavingExpirySym(sym);
     try {
       await onUpdateUnderlyingExpiry(sym, chosen.getTime());
-      setExpiryToast({ sym, message: `${sym} expiry updated to ${chosen.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}.`, type: 'success' });
+      setExpiryToast({ sym, message: `Added ${chosen.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} as a new expiry series for ${sym}. Existing series were not changed.`, type: 'success' });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to update expiry';
+      const msg = err instanceof Error ? err.message : 'Failed to add expiry';
+      setExpiryToast({ sym, message: msg, type: 'error' });
+    } finally {
+      setSavingExpirySym(null);
+    }
+  };
+
+  // Teacher removes one specific expiry series, leaving every other one intact.
+  const handleRemoveExpiry = async (sym: string, expiry: number) => {
+    setSavingExpirySym(sym);
+    try {
+      await onRemoveUnderlyingExpiry(sym, expiry);
+      setExpiryToast({ sym, message: `Removed the ${formatExpiryDate(expiry)} expiry series for ${sym}.`, type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to remove expiry';
       setExpiryToast({ sym, message: msg, type: 'error' });
     } finally {
       setSavingExpirySym(null);
@@ -891,8 +908,8 @@ ${bodyHtml}
                           const spot = stock ? stock.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
                           const sigma = und?.sigma || 0.25;
                           const cur = pos.kind === 'FUT'
-                            ? futPrice(spot, und?.expiry)
-                            : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
+                            ? futPrice(spot, pos.expiry)
+                            : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
                           const pnl = pos.side === 'long'
                             ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
                             : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -908,7 +925,7 @@ ${bodyHtml}
                               <td className="p-2 text-right text-[#C9D3D9]">{pos.lots}</td>
                               <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.avgPrice)}</td>
                               <td className="p-2 text-right text-[#D4A93F]">{inr(cur)}</td>
-                              <td className="p-2 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(und?.expiry)}</td>
+                              <td className="p-2 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(pos.expiry)}</td>
                               <td className="p-2 text-right text-[#C9D3D9]">{inr(pos.margin || 0)}</td>
                               <td className={`p-2 text-right font-semibold ${pnl >= 0 ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
                                 {pnl >= 0 ? '+' : ''}{inr(pnl)}
@@ -1698,8 +1715,9 @@ ${bodyHtml}
                 F&amp;O Expiry Management
               </h3>
               <p className="text-xs text-[#6B7680] mt-1">
-                Set or change the expiry date for any stock, index, or commodity contract. Updating an expiry
-                immediately re-prices that instrument's options/futures and open positions for every student.
+                Add or remove expiry series for any stock, index, or commodity contract - just like weekly and
+                monthly series coexist on a real exchange. Adding a new series never removes an existing one;
+                only the ✕ on a specific series removes just that one.
               </p>
             </div>
             <input
@@ -1728,9 +1746,8 @@ ${bodyHtml}
                   <th className="p-3 text-left uppercase tracking-wider">Symbol</th>
                   <th className="p-3 text-left uppercase tracking-wider">Name</th>
                   <th className="p-3 text-left uppercase tracking-wider">Type</th>
-                  <th className="p-3 text-right uppercase tracking-wider">Current Expiry</th>
-                  <th className="p-3 text-right uppercase tracking-wider">Days Left</th>
-                  <th className="p-3 text-right uppercase tracking-wider">Set New Expiry</th>
+                  <th className="p-3 text-left uppercase tracking-wider">Active Expiry Series</th>
+                  <th className="p-3 text-right uppercase tracking-wider">Add New Series</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1F2A33]">
@@ -1741,10 +1758,11 @@ ${bodyHtml}
                   })
                   .sort((a, b) => a.kind === b.kind ? a.sym.localeCompare(b.sym) : a.kind.localeCompare(b.kind))
                   .map(u => {
-                    const draft = expiryDrafts[u.sym] ?? expiryToDateInputValue(u.expiry);
+                    const draft = expiryDrafts[u.sym] ?? '';
                     const isSaving = savingExpirySym === u.sym;
+                    const series = sortExpiries(u.expiries);
                     return (
-                      <tr key={u.sym} className="hover:bg-[#141B23] transition-colors">
+                      <tr key={u.sym} className="hover:bg-[#141B23] transition-colors align-top">
                         <td className="p-3 font-bold text-[#F1F4F6]">{u.sym}</td>
                         <td className="p-3 text-[#C9D3D9] font-sans">{u.name}</td>
                         <td className="p-3">
@@ -1752,8 +1770,32 @@ ${bodyHtml}
                             {u.kind}
                           </span>
                         </td>
-                        <td className="p-3 text-right text-[#D4A93F]">{formatExpiryDate(u.expiry)}</td>
-                        <td className="p-3 text-right text-[#C9D3D9]">{daysToExpiry(u.expiry)}d</td>
+                        <td className="p-3">
+                          {series.length === 0 ? (
+                            <span className="text-[#6B7680] italic">No expiry series set.</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {series.map(exp => (
+                                <span
+                                  key={exp}
+                                  className="inline-flex items-center gap-1.5 px-2 py-1 border border-[#1F2A33] bg-[#141B23] text-[10px]"
+                                >
+                                  <span className="text-[#D4A93F]">{formatExpiryDate(exp)}</span>
+                                  <span className="text-[#6B7680]">({daysToExpiry(exp)}d)</span>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => handleRemoveExpiry(u.sym, exp)}
+                                    title={`Remove the ${formatExpiryDate(exp)} series - other series stay untouched`}
+                                    className="text-[#E2564F] hover:text-[#ff8b85] font-bold cursor-pointer disabled:opacity-50 leading-none"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-3 text-right">
                           <div className="inline-flex items-center gap-2">
                             <input
@@ -1765,10 +1807,14 @@ ${bodyHtml}
                             <button
                               type="button"
                               disabled={isSaving}
-                              onClick={() => handleSaveExpiry(u.sym, draft)}
+                              onClick={() => {
+                                handleAddExpiry(u.sym, draft);
+                                setExpiryDrafts(prev => ({ ...prev, [u.sym]: '' }));
+                              }}
+                              title="Adds a new expiry series - existing series are never removed or replaced"
                               className="px-3 py-1 bg-[#D4A93F] text-[#0A0E14] font-bold text-[10px] uppercase tracking-wider hover:brightness-110 cursor-pointer disabled:opacity-50"
                             >
-                              {isSaving ? 'Saving...' : 'Update'}
+                              {isSaving ? 'Saving...' : '+ Add'}
                             </button>
                           </div>
                         </td>
@@ -1780,7 +1826,7 @@ ${bodyHtml}
                   return !q || u.sym.toLowerCase().includes(q) || u.name.toLowerCase().includes(q);
                 }).length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-4 text-center text-[#6B7680]">No matching instruments.</td>
+                    <td colSpan={5} className="p-4 text-center text-[#6B7680]">No matching instruments.</td>
                   </tr>
                 )}
               </tbody>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FnoUnderlying, FnoPosition, Stock } from '../types';
-import { inr, futPrice, bsPrice, daysToExpiry, formatExpiryDate, RISK_FREE } from '../marketData';
+import { inr, futPrice, bsPrice, daysToExpiry, formatExpiryDate, getNearestExpiry, sortExpiries, RISK_FREE } from '../marketData';
 
 interface FnoSectionProps {
   underlyings: FnoUnderlying[];
@@ -16,7 +16,8 @@ interface FnoSectionProps {
     side: 'buy' | 'sell',
     lots: number,
     price: number,
-    marginRequired: number
+    marginRequired: number,
+    expiry: number
   ) => Promise<void>;
   onSquareOff: (key: string, exitPrice?: number, pnl?: number) => Promise<void>;
 }
@@ -31,6 +32,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
 }) => {
   const [fnoTab, setFnoTab] = useState<'futures' | 'options' | 'positions'>('futures');
   const [selectedUnderlying, setSelectedUnderlying] = useState<string>('NIFTY');
+  const [selectedExpiry, setSelectedExpiry] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [squaringOffKey, setSquaringOffKey] = useState<string | null>(null);
   const [squareOffNotice, setSquareOffNotice] = useState<string | null>(null);
@@ -44,6 +46,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
     lotSize: number;
     side: 'buy' | 'sell';
     price: number;
+    expiry: number;
     label: string;
   } | null>(null);
 
@@ -70,13 +73,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
     strike: number | null,
     optType: 'CE' | 'PE' | null,
     lotSize: number,
-    side: 'buy' | 'sell'
+    side: 'buy' | 'sell',
+    expiry: number
   ) => {
     const spot = getSpot(sym);
-    const cfg = underlyings.find(u => u.sym === sym) || { sigma: 0.25, expiry: undefined as number | undefined };
+    const cfg = underlyings.find(u => u.sym === sym) || { sigma: 0.25 };
     const price = kind === 'FUT'
-      ? futPrice(spot, cfg.expiry)
-      : bsPrice(spot, strike || spot, daysToExpiry(cfg.expiry) / 365, RISK_FREE, cfg.sigma, optType || 'CE');
+      ? futPrice(spot, expiry)
+      : bsPrice(spot, strike || spot, daysToExpiry(expiry) / 365, RISK_FREE, cfg.sigma, optType || 'CE');
 
     const label = kind === 'FUT'
       ? `${sym} FUTURES`
@@ -90,6 +94,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
       lotSize,
       side,
       price,
+      expiry,
       label
     });
     setLotsInput(1);
@@ -104,7 +109,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
       return;
     }
 
-    const { kind, underlying, strike, optType, lotSize, side, price } = fnoModal;
+    const { kind, underlying, strike, optType, lotSize, side, price, expiry } = fnoModal;
     const notional = lots * lotSize * price;
     const margin = kind === 'FUT' ? notional * 0.12 : (side === 'buy' ? notional : notional * 0.15);
 
@@ -115,7 +120,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
 
     setSubmitting(true);
     try {
-      await onFnoTrade(kind, underlying, strike, optType, lotSize, side, lots, price, margin);
+      await onFnoTrade(kind, underlying, strike, optType, lotSize, side, lots, price, margin, expiry);
       setFnoModal(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'F&O trade failed';
@@ -132,12 +137,19 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
   const activeStock = stocks.find(s => s.sym === activeCfg.sym);
   const activeTickDir = activeUnd?.tickDirection || activeStock?.tickDirection || 'same';
 
+  // An instrument can have several expiry series running at once (weekly + monthly,
+  // etc.) - the student picks which contract series to trade in the Options Chain.
+  const expiryOptions = sortExpiries(activeCfg.expiries);
+  const effectiveExpiry = (selectedExpiry && expiryOptions.includes(selectedExpiry))
+    ? selectedExpiry
+    : getNearestExpiry(activeCfg.expiries);
+
   const atm = Math.round(activeSpot / activeCfg.strikeStep) * activeCfg.strikeStep;
   const strikes: number[] = [];
   for (let i = -5; i <= 5; i++) {
     strikes.push(atm + i * activeCfg.strikeStep);
   }
-  const tYears = daysToExpiry(activeCfg.expiry) / 365;
+  const tYears = daysToExpiry(effectiveExpiry) / 365;
   const optionRows = strikes.map(k => ({
     strike: k,
     ce: bsPrice(activeSpot, k, tYears, RISK_FREE, activeCfg.sigma, 'CE'),
@@ -216,7 +228,8 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
             <tbody className="divide-y divide-[#1F2A33]">
               {filteredUnderlyings.map(u => {
                 const spot = getSpot(u.sym);
-                const fp = futPrice(spot, u.expiry);
+                const nearestExpiry = getNearestExpiry(u.expiries);
+                const fp = futPrice(spot, nearestExpiry);
                 const marginPerLot = fp * u.lotSize * 0.12;
                 const stockMatch = stocks.find(s => s.sym === u.sym);
                 const undTick = stockMatch ? stockMatch.tickDirection : u.tickDirection;
@@ -241,8 +254,8 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                     </td>
                     <td className="p-3 text-right text-sm font-semibold text-[#D4A93F]">{inr(fp)}</td>
                     <td className="p-3 text-right text-xs text-[#C9D3D9]">
-                      {formatExpiryDate(u.expiry)}
-                      <div className="text-[10px] text-[#6B7680]">{daysToExpiry(u.expiry)}d left</div>
+                      {formatExpiryDate(nearestExpiry)}
+                      <div className="text-[10px] text-[#6B7680]">{daysToExpiry(nearestExpiry)}d left</div>
                     </td>
                     <td className="p-3 text-right text-xs text-[#C9D3D9]">{u.lotSize}</td>
                     <td className="p-3 text-right text-xs text-[#6B7680]">{inr(marginPerLot)}</td>
@@ -250,14 +263,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                       <div className="inline-flex gap-2">
                         <button
                           type="button"
-                          onClick={() => openTradeModal('FUT', u.sym, null, null, u.lotSize, 'buy')}
+                          onClick={() => openTradeModal('FUT', u.sym, null, null, u.lotSize, 'buy', nearestExpiry)}
                           className="px-2.5 py-1 bg-[#2FBF71] text-[#06170F] font-bold text-xs uppercase hover:brightness-110 cursor-pointer"
                         >
                           Long
                         </button>
                         <button
                           type="button"
-                          onClick={() => openTradeModal('FUT', u.sym, null, null, u.lotSize, 'sell')}
+                          onClick={() => openTradeModal('FUT', u.sym, null, null, u.lotSize, 'sell', nearestExpiry)}
                           className="px-2.5 py-1 bg-[#E2564F] text-[#FFFFFF] font-bold text-xs uppercase hover:brightness-110 cursor-pointer"
                         >
                           Short
@@ -280,7 +293,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
               <label className="block text-[10px] text-[#6B7680] uppercase tracking-wider mb-1">Select Underlying</label>
               <select
                 value={selectedUnderlying}
-                onChange={(e) => setSelectedUnderlying(e.target.value)}
+                onChange={(e) => { setSelectedUnderlying(e.target.value); setSelectedExpiry(null); }}
                 className="bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] text-sm px-3 py-1.5 outline-none focus:border-[#D4A93F]"
               >
                 {underlyings.map(u => (
@@ -310,10 +323,24 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
               <div className="text-sm font-semibold text-[#F1F4F6]">{activeCfg.lotSize} shares</div>
             </div>
             <div className="text-right">
-              <div className="text-[10px] text-[#6B7680] uppercase tracking-wider">Expiry</div>
-              <div className="text-sm font-semibold text-[#F1F4F6]">
-                {formatExpiryDate(activeCfg.expiry)} <span className="text-[#6B7680] font-normal">({daysToExpiry(activeCfg.expiry)}d)</span>
-              </div>
+              <div className="text-[10px] text-[#6B7680] uppercase tracking-wider">Expiry Series</div>
+              {expiryOptions.length > 1 ? (
+                <select
+                  value={effectiveExpiry}
+                  onChange={(e) => setSelectedExpiry(Number(e.target.value))}
+                  className="bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] text-sm px-2 py-1 outline-none focus:border-[#D4A93F]"
+                >
+                  {expiryOptions.map(exp => (
+                    <option key={exp} value={exp}>
+                      {formatExpiryDate(exp)} ({daysToExpiry(exp)}d)
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-sm font-semibold text-[#F1F4F6]">
+                  {formatExpiryDate(effectiveExpiry)} <span className="text-[#6B7680] font-normal">({daysToExpiry(effectiveExpiry)}d)</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -351,14 +378,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                         <div className="inline-flex gap-1">
                           <button
                             type="button"
-                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'buy')}
+                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'buy', effectiveExpiry)}
                             className="px-2 py-0.5 bg-[#2FBF71] text-[#06170F] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
                             Long CE
                           </button>
                           <button
                             type="button"
-                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'sell')}
+                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'CE', activeCfg.lotSize, 'sell', effectiveExpiry)}
                             className="px-2 py-0.5 bg-[#E2564F] text-[#FFFFFF] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
                             Short CE
@@ -382,14 +409,14 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                         <div className="inline-flex gap-1">
                           <button
                             type="button"
-                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'buy')}
+                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'buy', effectiveExpiry)}
                             className="px-2 py-0.5 bg-[#2FBF71] text-[#06170F] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
                             Long PE
                           </button>
                           <button
                             type="button"
-                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'sell')}
+                            onClick={() => openTradeModal('OPT', activeCfg.sym, row.strike, 'PE', activeCfg.lotSize, 'sell', effectiveExpiry)}
                             className="px-2 py-0.5 bg-[#E2564F] text-[#FFFFFF] font-bold text-[10px] uppercase hover:brightness-110 cursor-pointer"
                           >
                             Short PE
@@ -444,10 +471,10 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                 <tbody className="divide-y divide-[#1F2A33]">
                   {(Object.entries(positions) as [string, FnoPosition][]).map(([key, pos]) => {
                     const spot = getSpot(pos.underlying);
-                    const cfg = underlyings.find(u => u.sym === pos.underlying) || { sigma: 0.25, expiry: undefined as number | undefined };
+                    const cfg = underlyings.find(u => u.sym === pos.underlying) || { sigma: 0.25 };
                     const curPrice = pos.kind === 'FUT'
-                      ? futPrice(spot, cfg.expiry)
-                      : bsPrice(spot, pos.strike || spot, daysToExpiry(cfg.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
+                      ? futPrice(spot, pos.expiry)
+                      : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
 
                     const pnl = pos.side === 'long'
                       ? (curPrice - pos.avgPrice) * pos.lots * pos.lotSize
@@ -467,7 +494,7 @@ export const FnoSection: React.FC<FnoSectionProps> = ({
                         <td className="p-3 text-right text-[#F1F4F6]">{pos.lots}</td>
                         <td className="p-3 text-right text-[#C9D3D9]">{inr(pos.avgPrice)}</td>
                         <td className="p-3 text-right text-[#C9D3D9]">{inr(curPrice)}</td>
-                        <td className="p-3 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(cfg.expiry)}</td>
+                        <td className="p-3 text-right text-[10px] text-[#6B7680]">{formatExpiryDate(pos.expiry)}</td>
                         <td className="p-3 text-right text-[#6B7680]">{inr(pos.margin)}</td>
                         <td className={`p-3 text-right font-semibold ${isProfit ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
                           {isProfit ? '+' : ''}{inr(pnl)}

@@ -9,6 +9,9 @@ import {
   collection, 
   getDocs, 
   onSnapshot,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
   Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -369,4 +372,49 @@ export async function saveFnoCompanyToFirestore(data: Partial<FnoUnderlying> & {
 export async function deleteFnoCompanyFromFirestore(sym: string): Promise<void> {
   const docRef = doc(db, 'fno_companies', sym.toUpperCase());
   await deleteDoc(docRef);
+}
+
+// Adds one expiry date to an instrument's expiry series WITHOUT touching any existing
+// ones (Firestore's arrayUnion is atomic and additive-only - the opposite of merge:true
+// on a plain array field, which would silently replace the whole array). Creates the
+// document (with sensible defaults for any missing base fields) if it doesn't exist yet.
+export async function addFnoExpiryToFirestore(
+  sym: string,
+  expiryMs: number,
+  base?: { name?: string; kind?: 'INDEX' | 'STOCK' | 'COMMODITY'; sigma?: number; lotSize?: number; strikeStep?: number }
+): Promise<void> {
+  const normalized = sym.toUpperCase();
+  const docRef = doc(db, 'fno_companies', normalized);
+  const existing = await getDoc(docRef);
+  if (!existing.exists()) {
+    // First expiry ever set for this instrument - create the document with base info.
+    const payload = stripUndefined({
+      sym: normalized,
+      name: base?.name || normalized,
+      kind: base?.kind || 'STOCK',
+      sigma: base?.sigma,
+      lotSize: base?.lotSize,
+      strikeStep: base?.strikeStep,
+      expiries: [expiryMs],
+      isCustom: true,
+      updatedAt: Date.now()
+    });
+    await setDoc(docRef, payload);
+    return;
+  }
+  await updateDoc(docRef, {
+    expiries: arrayUnion(expiryMs),
+    updatedAt: Date.now()
+  });
+}
+
+// Removes exactly one expiry date from an instrument's expiry series, leaving every
+// other expiry untouched.
+export async function removeFnoExpiryFromFirestore(sym: string, expiryMs: number): Promise<void> {
+  const normalized = sym.toUpperCase();
+  const docRef = doc(db, 'fno_companies', normalized);
+  await updateDoc(docRef, {
+    expiries: arrayRemove(expiryMs),
+    updatedAt: Date.now()
+  });
 }

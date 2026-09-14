@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition } from './types';
-import { INITIAL_STOCKS, FNO_UNDERLYINGS_BASE, inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, RISK_FREE } from './marketData';
+import { INITIAL_STOCKS, FNO_UNDERLYINGS_BASE, inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, DEFAULT_EXPIRY_MS, RISK_FREE } from './marketData';
 import { 
   loadPortfolioFromFirestore, 
   savePortfolioToFirestore, 
@@ -20,6 +20,8 @@ import {
   subscribeToFnoCompanies,
   saveFnoCompanyToFirestore,
   deleteFnoCompanyFromFirestore,
+  addFnoExpiryToFirestore,
+  removeFnoExpiryFromFirestore,
   defaultPortfolio,
   logOutUser,
   ensureAnonymousAuth,
@@ -144,7 +146,7 @@ export default function App() {
                 sym, name: data.name || sym, kind: 'STOCK',
                 sigma: data.sigma ?? 0.25, lotSize: data.lotSize ?? 100,
                 strikeStep: data.strikeStep ?? Math.max(5, Math.round((data.price || 1000) * 0.02)),
-                expiry: data.expiry, isCustom: true
+                expiries: typeof data.expiry === 'number' ? [data.expiry] : [DEFAULT_EXPIRY_MS], isCustom: true
               }
             });
           }
@@ -163,13 +165,14 @@ export default function App() {
             });
           }
         });
-        FNO_UNDERLYINGS_BASE.filter(u => u.kind !== 'STOCK').forEach(u => {
+        FNO_UNDERLYINGS_BASE.forEach(u => {
           if (!fnoDocs[u.sym] && !fnoTasks.some(t => t.sym === u.sym)) {
             fnoTasks.push({
               sym: u.sym,
               payload: {
                 sym: u.sym, name: u.name, kind: u.kind,
-                sigma: u.sigma, lotSize: u.lotSize, strikeStep: u.strikeStep, isCustom: false
+                sigma: u.sigma, lotSize: u.lotSize, strikeStep: u.strikeStep,
+                expiries: [DEFAULT_EXPIRY_MS], isCustom: false
               }
             });
           }
@@ -282,7 +285,7 @@ export default function App() {
               sigma: fsData.sigma !== undefined ? fsData.sigma : existing.sigma,
               lotSize: fsData.lotSize !== undefined ? fsData.lotSize : existing.lotSize,
               strikeStep: fsData.strikeStep !== undefined ? fsData.strikeStep : existing.strikeStep,
-              expiry: fsData.expiry !== undefined ? fsData.expiry : existing.expiry
+              expiries: fsData.expiries !== undefined ? fsData.expiries : existing.expiries
             });
           } else if (fsData.kind) {
             undMap.set(sym, {
@@ -292,7 +295,7 @@ export default function App() {
               sigma: fsData.sigma ?? 0.25,
               lotSize: fsData.lotSize ?? 100,
               strikeStep: fsData.strikeStep ?? 20,
-              expiry: fsData.expiry,
+              expiries: fsData.expiries,
               isCustom: true
             });
           }
@@ -574,7 +577,8 @@ export default function App() {
     side: 'buy' | 'sell',
     lots: number,
     price: number,
-    marginRequired: number
+    marginRequired: number,
+    expiry: number
   ) => {
     if (!currentRoll) return;
     if (portfolio.isFrozen) {
@@ -585,7 +589,10 @@ export default function App() {
       throw new Error(`Insufficient cash margin! Required: ${inr(marginRequired)}, Available: ${inr(currentCash)}`);
     }
 
-    const key = kind === 'FUT' ? `${underlying}_FUT` : `${underlying}_${strike}_${optType}`;
+    // The expiry is part of the contract's identity - a NIFTY 24500 CE expiring this
+    // week is a different contract from a NIFTY 24500 CE expiring next month, even
+    // though everything else about them matches.
+    const key = kind === 'FUT' ? `${underlying}_FUT_${expiry}` : `${underlying}_${strike}_${optType}_${expiry}`;
     const positions = { ...(portfolio.fno?.positions || {}) };
     const pos = positions[key];
     const actionSide = side === 'buy' ? 'long' : 'short';
@@ -599,6 +606,7 @@ export default function App() {
         underlying,
         strike,
         optType,
+        expiry,
         lotSize,
         side: actionSide,
         lots,
@@ -643,6 +651,7 @@ export default function App() {
             underlying,
             strike,
             optType,
+            expiry,
             side,
             lots,
             price,
@@ -675,8 +684,8 @@ export default function App() {
       const sigma = und?.sigma || 0.25;
 
       calculatedExitPrice = pos.kind === 'FUT'
-        ? futPrice(spot, und?.expiry)
-        : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
+        ? futPrice(spot, pos.expiry)
+        : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, sigma, pos.optType || 'CE');
 
       const totalQty = pos.lots * pos.lotSize;
       calculatedPnl = pos.side === 'long'
@@ -762,15 +771,28 @@ export default function App() {
     if (updates.fno === false) {
       await deleteFnoCompanyFromFirestore(normalized);
     } else if (updates.fno === true || lotSize !== undefined || sigma !== undefined || strikeStep !== undefined) {
-      await saveFnoCompanyToFirestore({
-        sym: normalized,
-        name: updates.name,
-        kind: 'STOCK',
-        lotSize,
-        sigma,
-        strikeStep,
-        isCustom: true
-      });
+      const existingUnderlying = underlyings.find(u => u.sym === normalized);
+      if (updates.fno === true && (!existingUnderlying || !existingUnderlying.expiries?.length)) {
+        // First time F&O is being enabled for this stock - give it a starter expiry
+        // series (arrayUnion-based, so it's additive even if a doc already exists).
+        await addFnoExpiryToFirestore(normalized, DEFAULT_EXPIRY_MS, {
+          name: updates.name,
+          kind: 'STOCK',
+          lotSize,
+          sigma,
+          strikeStep
+        });
+      } else {
+        await saveFnoCompanyToFirestore({
+          sym: normalized,
+          name: updates.name,
+          kind: 'STOCK',
+          lotSize,
+          sigma,
+          strikeStep,
+          isCustom: true
+        });
+      }
     }
 
     setStocks(prev => prev.map(s => s.sym === normalized ? { ...s, ...updates } : s));
@@ -793,37 +815,47 @@ export default function App() {
     }
   };
 
-  // Teacher sets/edits the expiry date for any F&O underlying (stock, index, or commodity)
-  // - always lives in the derivatives-segment collection.
-  const handleUpdateUnderlyingExpiry = async (sym: string, expiry: number) => {
+  // Teacher adds a new expiry series for any F&O underlying (stock, index, or commodity).
+  // This ONLY adds - existing expiry series for that instrument are never touched.
+  const handleAddUnderlyingExpiry = async (sym: string, expiry: number) => {
     const normalized = sym.toUpperCase();
     const existing = underlyings.find(u => u.sym === normalized);
-    await saveFnoCompanyToFirestore({
-      sym: normalized,
+    await addFnoExpiryToFirestore(normalized, expiry, {
       name: existing?.name,
       kind: existing?.kind,
       sigma: existing?.sigma,
       lotSize: existing?.lotSize,
-      strikeStep: existing?.strikeStep,
-      expiry
+      strikeStep: existing?.strikeStep
     });
-    setUnderlyings(prev => prev.map(u => u.sym === normalized ? { ...u, expiry } : u));
+    setUnderlyings(prev => prev.map(u => u.sym === normalized
+      ? { ...u, expiries: Array.from(new Set([...(u.expiries || []), expiry])).sort((a, b) => a - b) }
+      : u
+    ));
+  };
+
+  // Teacher removes exactly one expiry series from an instrument, leaving all others intact.
+  const handleRemoveUnderlyingExpiry = async (sym: string, expiry: number) => {
+    const normalized = sym.toUpperCase();
+    await removeFnoExpiryFromFirestore(normalized, expiry);
+    setUnderlyings(prev => prev.map(u => u.sym === normalized
+      ? { ...u, expiries: (u.expiries || []).filter(e => e !== expiry) }
+      : u
+    ));
   };
 
   // Teacher adds a new company: always creates the equity-segment document;
-  // also creates the derivatives-segment document if F&O is enabled for it.
+  // also creates the derivatives-segment document (with one default expiry
+  // series) if F&O is enabled for it.
   const handleAddCompany = async (stock: Partial<Stock>) => {
     const { lotSize, sigma, strikeStep, ...equityFields } = stock;
     await saveEquityCompanyToFirestore({ ...equityFields, fno: !!stock.fno });
     if (stock.fno && stock.sym) {
-      await saveFnoCompanyToFirestore({
-        sym: stock.sym,
+      await addFnoExpiryToFirestore(stock.sym, DEFAULT_EXPIRY_MS, {
         name: stock.name,
         kind: 'STOCK',
         lotSize,
         sigma,
-        strikeStep,
-        isCustom: true
+        strikeStep
       });
     }
   };
@@ -858,8 +890,8 @@ export default function App() {
     const spot = st ? st.ltp : (und && typeof und.spot === 'number' ? und.spot : 1000);
     const cfg = und || { sigma: 0.25 };
     const cur = pos.kind === 'FUT'
-      ? futPrice(spot, und?.expiry)
-      : bsPrice(spot, pos.strike || spot, daysToExpiry(und?.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
+      ? futPrice(spot, pos.expiry)
+      : bsPrice(spot, pos.strike || spot, daysToExpiry(pos.expiry) / 365, RISK_FREE, cfg.sigma, pos.optType || 'CE');
     const pnl = pos.side === 'long'
       ? (cur - pos.avgPrice) * pos.lots * pos.lotSize
       : (pos.avgPrice - cur) * pos.lots * pos.lotSize;
@@ -1070,7 +1102,8 @@ export default function App() {
                 onUpdateCompany={handleUpdateCompany}
                 onAddCompany={handleAddCompany}
                 onDeleteCompany={handleDeleteCompany}
-                onUpdateUnderlyingExpiry={handleUpdateUnderlyingExpiry}
+                onUpdateUnderlyingExpiry={handleAddUnderlyingExpiry}
+                onRemoveUnderlyingExpiry={handleRemoveUnderlyingExpiry}
               />
             )}
           </main>
