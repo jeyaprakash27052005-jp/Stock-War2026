@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Stock } from '../types';
 import { inr, pct } from '../marketData';
+import { CompanyProfile } from './CompanyProfile';
+import { BarChart3 } from 'lucide-react';
 
 interface MarketWatchProps {
   stocks: Stock[];
@@ -18,6 +20,8 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
   const [orderQty, setOrderQty] = useState<number>(1);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [profileStockSym, setProfileStockSym] = useState<string | null>(null);
+  const profileStock = profileStockSym ? (stocks.find(s => s.sym === profileStockSym) || null) : null;
 
   const sectors = ['ALL', ...Array.from(new Set(stocks.map(s => s.sector))).sort()];
 
@@ -161,23 +165,30 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
                 return (
                   <tr key={stock.sym} className="hover:bg-[#141B23] transition-colors font-mono">
                     <td className="p-3">
-                      <div className="font-bold text-[#F1F4F6] flex items-center gap-2">
-                        {stock.sym}
-                        {stock.isCustom && (
-                          <span className="text-[9px] bg-[#D4A93F]/10 border border-[#D4A93F]/40 text-[#D4A93F] px-1.5 py-0.5 uppercase tracking-wider">
-                            Teacher Added
-                          </span>
-                        )}
-                        {stock.tickDirection === 'up' && (
-                          <span className="text-[#2FBF71] text-xs animate-bounce">▲</span>
-                        )}
-                        {stock.tickDirection === 'down' && (
-                          <span className="text-[#E2564F] text-xs animate-bounce">▼</span>
-                        )}
-                      </div>
-                      <div className="font-['IBM_Plex_Sans',sans-serif] text-xs text-[#6B7680] truncate max-w-xs">
-                        {stock.name}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProfileStockSym(stock.sym)}
+                        className="text-left cursor-pointer group"
+                        title="View fundamental analysis"
+                      >
+                        <div className="font-bold text-[#F1F4F6] group-hover:text-[#D4A93F] flex items-center gap-2 transition-colors">
+                          {stock.sym}
+                          {stock.isCustom && (
+                            <span className="text-[9px] bg-[#D4A93F]/10 border border-[#D4A93F]/40 text-[#D4A93F] px-1.5 py-0.5 uppercase tracking-wider">
+                              Teacher Added
+                            </span>
+                          )}
+                          {stock.tickDirection === 'up' && (
+                            <span className="text-[#2FBF71] text-xs animate-bounce">▲</span>
+                          )}
+                          {stock.tickDirection === 'down' && (
+                            <span className="text-[#E2564F] text-xs animate-bounce">▼</span>
+                          )}
+                        </div>
+                        <div className="font-['IBM_Plex_Sans',sans-serif] text-xs text-[#6B7680] truncate max-w-xs">
+                          {stock.name}
+                        </div>
+                      </button>
                     </td>
                     <td className="p-3 text-xs text-[#6B7680] font-['IBM_Plex_Sans',sans-serif]">
                       {stock.sector}
@@ -201,6 +212,14 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
                     </td>
                     <td className="p-3 text-right">
                       <div className="inline-flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setProfileStockSym(stock.sym)}
+                          title="View fundamental analysis"
+                          className="px-2 py-1 bg-[#1F2A33] border border-[#D4A93F]/50 text-[#D4A93F] hover:bg-[#D4A93F] hover:text-[#0A0E14] font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center gap-1"
+                        >
+                          <BarChart3 className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenOrder(stock, 'buy')}
@@ -304,6 +323,11 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
             </div>
           </div>
         </div>
+      )}
+
+      {/* Company Fundamentals Profile */}
+      {profileStock && (
+        <CompanyProfile stock={profileStock} onClose={() => setProfileStockSym(null)} />
       )}
     </div>
   );
