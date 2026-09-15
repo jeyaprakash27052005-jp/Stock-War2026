@@ -15,7 +15,7 @@ import {
   Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Portfolio, Stock, FnoUnderlying } from './types';
+import { Portfolio, Stock, FnoUnderlying, StudentProfile } from './types';
 
 export const STARTING_CASH = 1000000;
 
@@ -416,5 +416,47 @@ export async function removeFnoExpiryFromFirestore(sym: string, expiryMs: number
   await updateDoc(docRef, {
     expiries: arrayRemove(expiryMs),
     updatedAt: Date.now()
+  });
+}
+
+// =================== STUDENT PROFILE (separate collection) ===================
+// Kept apart from 'portfolios' so profile/identity details (name, department,
+// roll number, year of study, optional partner details) are managed and
+// queried independently of trading data.
+
+export async function saveStudentProfileToFirestore(roll: string, profile: Partial<StudentProfile>): Promise<void> {
+  const normalizedRoll = roll.trim().toUpperCase();
+  const docRef = doc(db, 'student_profiles', normalizedRoll);
+  const existing = await getDoc(docRef);
+  const payload = stripUndefined({
+    ...profile,
+    roll: normalizedRoll,
+    createdAt: existing.exists() ? existing.data().createdAt : Date.now(),
+    updatedAt: Date.now()
+  });
+  await setDoc(docRef, payload, { merge: true });
+}
+
+export async function loadStudentProfileFromFirestore(roll: string): Promise<StudentProfile | null> {
+  const normalizedRoll = roll.trim().toUpperCase();
+  const docRef = doc(db, 'student_profiles', normalizedRoll);
+  const snap = await getDoc(docRef);
+  return snap.exists() ? (snap.data() as StudentProfile) : null;
+}
+
+export async function deleteStudentProfileFromFirestore(roll: string): Promise<void> {
+  const normalizedRoll = roll.trim().toUpperCase();
+  const docRef = doc(db, 'student_profiles', normalizedRoll);
+  await deleteDoc(docRef);
+}
+
+export function subscribeToAllStudentProfiles(onUpdate: (profiles: Record<string, StudentProfile>) => void) {
+  const colRef = collection(db, 'student_profiles');
+  return onSnapshot(colRef, (snap) => {
+    const map: Record<string, StudentProfile> = {};
+    snap.forEach((d) => { map[d.id] = d.data() as StudentProfile; });
+    onUpdate(map);
+  }, (err) => {
+    console.warn('Firestore student_profiles subscription warning:', err);
   });
 }

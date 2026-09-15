@@ -10,6 +10,7 @@ interface NavbarProps {
   isFrozen?: boolean;
   onLogout: () => void;
   onDeleteAccount?: () => void;
+  onEditProfile?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -18,7 +19,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   studentName,
   cash,
   isFrozen,
-  onLogout
+  onLogout,
+  onEditProfile
 }) => {
   return (
     <>
@@ -61,6 +63,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="w-2 h-2 rounded-full bg-[#2FBF71]"></span>
             <span>Firestore Sync</span>
           </div>
+
+          {userRole === 'student' && onEditProfile && (
+            <button
+              type="button"
+              onClick={onEditProfile}
+              className="border border-[#1F2A33] text-[#6B7680] hover:border-[#D4A93F] hover:text-[#D4A93F] px-3.5 py-1.5 text-xs tracking-wider uppercase font-semibold transition cursor-pointer"
+            >
+              My Profile
+            </button>
+          )}
 
           <button
             type="button"

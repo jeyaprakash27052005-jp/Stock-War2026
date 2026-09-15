@@ -105,3 +105,26 @@ export interface Candle {
   c: number;
   v: number;
 }
+
+// ==================== STUDENT PROFILE ====================
+// Collected on first login (and again after a teacher resets the account),
+// and editable any time afterward from the student's own header.
+
+export interface PersonDetails {
+  name: string;
+  department: string;
+  rollNumber: string;
+  yearOfStudy: string;
+}
+
+export interface StudentProfile {
+  roll: string;
+  primary: PersonDetails;
+  // Optional second/"sub header" set of the same details - e.g. a trading partner
+  // or team co-member. Every field here is optional; the section can be left blank.
+  partner?: Partial<PersonDetails>;
+  completed: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition } from './types';
+import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition, StudentProfile, PersonDetails } from './types';
 import { INITIAL_STOCKS, FNO_UNDERLYINGS_BASE, inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, DEFAULT_EXPIRY_MS, RISK_FREE } from './marketData';
 import { 
   loadPortfolioFromFirestore, 
@@ -22,6 +22,9 @@ import {
   deleteFnoCompanyFromFirestore,
   addFnoExpiryToFirestore,
   removeFnoExpiryFromFirestore,
+  saveStudentProfileToFirestore,
+  loadStudentProfileFromFirestore,
+  deleteStudentProfileFromFirestore,
   defaultPortfolio,
   logOutUser,
   ensureAnonymousAuth,
@@ -41,6 +44,7 @@ import { FnoSection } from './components/FnoSection';
 import { CandleChart } from './components/CandleChart';
 import { OrderHistory } from './components/OrderHistory';
 import { TeacherDashboard } from './components/TeacherDashboard';
+import { StudentProfileModal } from './components/StudentProfileModal';
 
 export default function App() {
   // Market State
@@ -55,7 +59,12 @@ export default function App() {
   const [studentName, setStudentName] = useState<string>('');
   const [userEmail, setUserEmail] = useState<string>('');
   const [sessionRestored, setSessionRestored] = useState(false);
-  
+
+  // Student Profile State (name, department, roll number, year of study - separate from trading data)
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileMandatory, setProfileMandatory] = useState(false);
+
   // Student Portfolio State
   const [portfolio, setPortfolio] = useState<Portfolio>(defaultPortfolio(''));
   
@@ -67,6 +76,24 @@ export default function App() {
 
   // Guards the one-time catalog seed so it only runs once per app load, not on every snapshot
   const catalogSeededRef = useRef(false);
+
+  // Loads a student's profile from Firestore and decides whether the mandatory
+  // "complete your profile" prompt needs to show (missing, or never completed).
+  const checkAndLoadProfile = async (roll: string) => {
+    try {
+      const profile = await loadStudentProfileFromFirestore(roll);
+      if (profile && profile.completed) {
+        setStudentProfile(profile);
+        setShowProfileModal(false);
+      } else {
+        setStudentProfile(profile);
+        setProfileMandatory(true);
+        setShowProfileModal(true);
+      }
+    } catch (err) {
+      console.warn('Could not load student profile:', err);
+    }
+  };
 
   // 0. Restore session (if any) on first load, via Firebase Auth + Firestore only.
   // No localStorage/sessionStorage is used: the browser keeps an anonymous Firebase Auth
@@ -88,6 +115,7 @@ export default function App() {
           setUserRole(session.role);
           if (session.role === 'student') {
             setActiveTab('market');
+            await checkAndLoadProfile(session.roll);
           }
         }
       } catch (err) {
@@ -457,6 +485,7 @@ export default function App() {
     setPortfolio(loaded);
     setUserRole('student');
     setActiveTab('market');
+    await checkAndLoadProfile(normalized);
     // Best-effort: persist the session in Firestore so a page refresh restores it.
     // Login itself must never fail just because this secondary step fails.
     try {
@@ -512,6 +541,31 @@ export default function App() {
     setStudentName('');
     setUserEmail('');
     setPortfolio(defaultPortfolio(''));
+    setStudentProfile(null);
+    setShowProfileModal(false);
+    setProfileMandatory(false);
+  };
+
+  // Saves the student's profile (name/department/roll/year + optional partner details)
+  // to its own Firestore collection, separate from trading/portfolio data.
+  const handleSaveProfile = async (primary: PersonDetails, partner: Partial<PersonDetails>) => {
+    const hasPartnerDetails = Object.values(partner).some(v => (v || '').trim().length > 0);
+    const payload = {
+      primary,
+      partner: hasPartnerDetails ? partner : undefined,
+      completed: true
+    };
+    await saveStudentProfileToFirestore(currentRoll, payload);
+    setStudentProfile(prev => ({
+      roll: currentRoll,
+      primary,
+      partner: hasPartnerDetails ? partner : undefined,
+      completed: true,
+      createdAt: prev?.createdAt || Date.now(),
+      updatedAt: Date.now()
+    }));
+    setShowProfileModal(false);
+    setProfileMandatory(false);
   };
 
   // Student Equity Trade Execution (Saved directly to Cloud Firestore)
@@ -726,6 +780,13 @@ export default function App() {
   // Teacher resets student account in Firestore
   const handleResetStudent = async (roll: string) => {
     await resetStudentPortfolioInFirestore(roll);
+    // Also clear their profile so the mandatory "complete your profile" prompt
+    // appears again the next time they log in, as if it's their first login.
+    try {
+      await deleteStudentProfileFromFirestore(roll);
+    } catch (err) {
+      console.warn('Could not clear student profile on reset:', err);
+    }
   };
 
   // Teacher freezes/unfreezes student account in Firestore
@@ -741,6 +802,11 @@ export default function App() {
   // Teacher purges student record completely from Firestore
   const handlePurgeStudent = async (roll: string) => {
     await purgeStudentPortfolioFromFirestore(roll);
+    try {
+      await deleteStudentProfileFromFirestore(roll);
+    } catch (err) {
+      console.warn('Could not purge student profile:', err);
+    }
   };
 
   // Teacher restores student account in Firestore
@@ -925,7 +991,18 @@ export default function App() {
             isFrozen={userRole === 'student' ? portfolio.isFrozen : false}
             onLogout={handleLogout}
             onDeleteAccount={userRole === 'student' ? handleDeleteOwnAccount : undefined}
+            onEditProfile={userRole === 'student' ? () => { setProfileMandatory(false); setShowProfileModal(true); } : undefined}
           />
+
+          {userRole === 'student' && showProfileModal && (
+            <StudentProfileModal
+              roll={currentRoll}
+              initialProfile={studentProfile}
+              mandatory={profileMandatory}
+              onSave={handleSaveProfile}
+              onClose={profileMandatory ? undefined : () => setShowProfileModal(false)}
+            />
+          )}
 
           {userRole === 'student' && portfolio.isFrozen && (
             <div className="bg-[#D4A93F]/15 border-b border-[#D4A93F] px-6 py-2.5 text-[#D4A93F] text-xs font-mono flex items-center justify-between">
