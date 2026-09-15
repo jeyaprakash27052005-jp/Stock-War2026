@@ -308,21 +308,21 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Real-time Live Price Ticker Simulation (moderate, steady exchange-feed pacing)
+  // 2. Real-time Live Price Ticker Simulation (slow, gentle exchange-feed pacing)
   useEffect(() => {
-    // 1.5s tick cadence - a calmer, more readable pace than a raw high-frequency feed
+    // 2.2s tick cadence - deliberately unhurried so price/chart movement reads as gentle drift
     const interval = setInterval(() => {
       let updatedStockMap = new Map<string, Stock>();
 
       setStocks(prev => {
         const nextStocks = prev.map(s => {
-          // ~55% probability of a tick per cycle so movement feels natural, not frantic
-          if (Math.random() > 0.55) {
+          // ~38% probability of a tick per cycle - most symbols sit still most cycles
+          if (Math.random() > 0.38) {
             return s.tickDirection !== 'same' ? { ...s, tickDirection: 'same' } : s;
           }
 
-          // Moderated price scale for steady, believable movements across all tiers
-          const priceScale = s.ltp > 10000 ? 14 : s.ltp > 3000 ? 5.5 : s.ltp > 1000 ? 2.5 : s.ltp > 300 ? 1.1 : s.ltp > 50 ? 0.45 : 0.18;
+          // Gentle price scale for slow, believable drift across all tiers
+          const priceScale = s.ltp > 10000 ? 9 : s.ltp > 3000 ? 3.5 : s.ltp > 1000 ? 1.6 : s.ltp > 300 ? 0.7 : s.ltp > 50 ? 0.3 : 0.12;
           const rawDelta = (Math.random() - 0.495) * priceScale;
           // Quantize to nearest 0.05 tick size
           let tickSteps = Math.round(rawDelta / 0.05);
@@ -335,7 +335,7 @@ export default function App() {
           const direction: 'up' | 'down' = newLtp > s.ltp ? 'up' : 'down';
           const high = Math.max(s.high || s.ltp, newLtp);
           const low = Math.min(s.low || s.ltp, newLtp);
-          const volumeIncrement = Math.floor(Math.random() * 200) + 10;
+          const volumeIncrement = Math.floor(Math.random() * 120) + 5;
           const volume = (s.volume || 15000) + volumeIncrement;
 
           const updatedStock = {
@@ -358,11 +358,8 @@ export default function App() {
         return prev.map(u => {
           if (u.kind === 'INDEX') {
             const spot = u.spot || (u.sym === 'BANKNIFTY' ? 51500 : u.sym === 'FINNIFTY' ? 23500 : 24500);
-            // Moderated volatility for F&O indices:
-            // NIFTY: ~ Rs 1 to Rs 11 (scale 12)
-            // BANKNIFTY: ~ Rs 3 to Rs 26 (scale 28)
-            // FINNIFTY: ~ Rs 1.5 to Rs 13 (scale 14)
-            const scale = u.sym === 'BANKNIFTY' ? 28 : u.sym === 'FINNIFTY' ? 14 : 12;
+            // Gentle drift for F&O indices - roughly a third of the earlier "heightened" scale
+            const scale = u.sym === 'BANKNIFTY' ? 18 : u.sym === 'FINNIFTY' ? 9 : 8;
             const rawStep = (Math.random() - 0.495) * scale;
             let tickSteps = Math.round(rawStep / 0.05);
             if (tickSteps === 0) {
@@ -382,7 +379,7 @@ export default function App() {
             };
           } else if (u.kind === 'COMMODITY') {
             const spot = u.spot || 5000;
-            const scale = u.sym === 'GOLD' ? 22 : u.sym === 'SILVER' ? 18 : u.sym === 'CRUDEOIL' ? 5.5 : 1.6;
+            const scale = u.sym === 'GOLD' ? 14 : u.sym === 'SILVER' ? 11 : u.sym === 'CRUDEOIL' ? 3.5 : 1;
             const rawStep = (Math.random() - 0.496) * scale;
             let tickSteps = Math.round(rawStep / 0.05);
             if (tickSteps === 0) {
@@ -419,7 +416,7 @@ export default function App() {
           }
         });
       });
-    }, 1500);
+    }, 2200);
 
     return () => clearInterval(interval);
   }, []);

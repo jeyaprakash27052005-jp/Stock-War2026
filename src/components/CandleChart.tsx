@@ -59,6 +59,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   const [chartType, setChartType] = useState<ChartType>('candle');
   const [showMA, setShowMA] = useState<boolean>(true);
   const [showVWAP, setShowVWAP] = useState<boolean>(true);
+  const scaleRef = useRef<{ pMin: number; pMax: number; marginT: number; marginB: number; priceH: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -107,6 +108,18 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     if (cmd) return cmd.tickDirection;
     return 'same';
   })();
+
+  // Pixel Y for the live price overlay, derived from the price-axis scale that the
+  // canvas last drew with. Recomputed every render so the HTML overlay (which has a
+  // CSS transition on `top`) smoothly glides to the new position instead of jumping.
+  const overlayY = (() => {
+    const s = scaleRef.current;
+    if (!s) return null;
+    const plotPriceH = s.priceH - s.marginT - s.marginB;
+    const clamped = Math.min(s.pMax, Math.max(s.pMin, currentLivePrice));
+    return s.marginT + plotPriceH - ((clamped - s.pMin) / (s.pMax - s.pMin || 1)) * plotPriceH;
+  })();
+  const overlayColor = currentTickDir === 'down' ? '#E2564F' : '#2FBF71';
 
   // Seed a full history buffer whenever the symbol or timeframe changes
   useEffect(() => {
@@ -291,6 +304,10 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
     const yOf = (val: number) => marginT + plotPriceH - ((val - pMin) / (pMax - pMin || 1)) * plotPriceH;
     const xOf = (i: number) => marginL + slot * i + slot / 2;
+
+    // Expose the current price-axis scale so the HTML overlay (smoothly-animated
+    // live price line/badge) can position itself in sync with the canvas.
+    scaleRef.current = { pMin, pMax, marginT, marginB, priceH };
 
     // --- Price panel grid ---
     ctx.strokeStyle = '#1F2A33';
@@ -505,26 +522,9 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     }
 
     // --- Live price line + badge ---
-    const currentY = yOf(currentLivePrice);
-    const isUp = visible.length > 0 ? currentLivePrice >= visible[0].o : true;
-    const lineColor = isUp ? '#2FBF71' : '#E2564F';
-
-    ctx.save();
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(marginL, currentY);
-    ctx.lineTo(width - marginR, currentY);
-    ctx.stroke();
-
-    ctx.setLineDash([]);
-    ctx.fillStyle = lineColor;
-    ctx.fillRect(width - marginR + 2, currentY - 9, marginR - 6, 18);
-    ctx.fillStyle = '#05070A';
-    ctx.font = 'bold 10px "IBM Plex Mono", monospace';
-    ctx.fillText(inr(currentLivePrice), width - marginR + 6, currentY + 3.5);
-    ctx.restore();
+    // NOTE: the dashed live-price line + badge are rendered as a smoothly-animated
+    // HTML overlay (see JSX below) instead of drawn directly on canvas, so the
+    // marker visibly glides between price levels instead of jumping instantly.
 
     // --- Trade entry markers ---
     entries.forEach(e => {
@@ -744,15 +744,41 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       )}
 
       <div ref={containerRef} className="bg-[#10161D] border border-[#1F2A33] p-4">
-        <canvas
-          ref={canvasRef}
-          className="w-full block cursor-crosshair"
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-        />
+        <div className="relative">
+          <canvas
+            ref={canvasRef}
+            className="w-full block cursor-crosshair"
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+          />
+
+          {/* Smoothly-animated live price line + badge, gliding to each new tick
+              instead of jumping instantly - overlaid in sync with the canvas's own
+              price-axis scale (see scaleRef). */}
+          {overlayY !== null && (
+            <>
+              <div
+                className="absolute pointer-events-none border-t border-dashed transition-[top] duration-[1300ms] ease-out"
+                style={{ left: 65, right: 70, top: overlayY, borderColor: overlayColor }}
+              />
+              <div
+                className="absolute pointer-events-none px-1.5 py-1 text-[10px] font-bold font-mono transition-[top] duration-[1300ms] ease-out"
+                style={{
+                  right: 2,
+                  top: overlayY,
+                  transform: 'translateY(-50%)',
+                  backgroundColor: overlayColor,
+                  color: '#05070A'
+                }}
+              >
+                {inr(currentLivePrice)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
