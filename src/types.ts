@@ -126,5 +126,10 @@ export interface StudentProfile {
   completed: boolean;
   createdAt: number;
   updatedAt: number;
+  // Google + email-link registration (replaces the old roll/password student login)
+  googleUid?: string;
+  email?: string;
+  verified?: boolean;
+  verifiedAt?: number;
 }
 

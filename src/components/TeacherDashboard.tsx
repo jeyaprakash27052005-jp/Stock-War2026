@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock, Printer } from 'lucide-react';
-import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition } from '../types';
+import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock, Printer, IdCard, Mail, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition, StudentProfile } from '../types';
 import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, sortExpiries, RISK_FREE } from '../marketData';
 
 interface TeacherDashboardProps {
   students: Portfolio[];
+  studentProfiles: Record<string, StudentProfile>;
   allStocks: Stock[];
   underlyings: FnoUnderlying[];
   onResetStudent: (roll: string) => Promise<void>;
@@ -31,6 +32,7 @@ interface ActionModalConfig {
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   students,
+  studentProfiles,
   allStocks,
   underlyings,
   onResetStudent,
@@ -44,7 +46,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onUpdateUnderlyingExpiry,
   onRemoveUnderlyingExpiry
 }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'companies' | 'expiry'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'companies' | 'expiry' | 'registrations'>('students');
+  const [registrationSearch, setRegistrationSearch] = useState<string>('');
   const [selectedStudentRoll, setSelectedStudentRoll] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [studentStatusFilter, setStudentStatusFilter] = useState<'ALL' | 'ACTIVE' | 'FROZEN' | 'DELETED'>('ALL');
@@ -648,6 +651,18 @@ ${bodyHtml}
           >
             <CalendarClock className="w-3.5 h-3.5" />
             F&amp;O Expiry Management ({underlyings.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => { setActiveTab('registrations'); setSelectedStudentRoll(null); }}
+            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border flex items-center gap-1.5 ${
+              activeTab === 'registrations'
+                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
+                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
+            }`}
+          >
+            <IdCard className="w-3.5 h-3.5" />
+            Registered Users ({Object.keys(studentProfiles).length})
           </button>
         </div>
       </div>
@@ -1832,6 +1847,104 @@ ${bodyHtml}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ===================== TAB: REGISTERED USERS ===================== */}
+      {activeTab === 'registrations' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold uppercase tracking-wider text-[#F1F4F6]">
+                Registered Users
+              </h3>
+              <p className="text-xs text-[#6B7680] mt-1">
+                Full KYC details collected at registration - Google account, verification status,
+                head client and optional partner/team member details.
+              </p>
+            </div>
+            <input
+              type="text"
+              placeholder="Search name, roll, email..."
+              value={registrationSearch}
+              onChange={(e) => setRegistrationSearch(e.target.value)}
+              className="bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-1.5 font-mono outline-none focus:border-[#D4A93F]"
+            />
+          </div>
+
+          {(() => {
+            const q = registrationSearch.trim().toLowerCase();
+            const profiles: StudentProfile[] = (Object.values(studentProfiles) as StudentProfile[]).filter(p => {
+              if (!q) return true;
+              return (
+                p.roll.toLowerCase().includes(q) ||
+                (p.email || '').toLowerCase().includes(q) ||
+                p.primary.name.toLowerCase().includes(q) ||
+                p.primary.rollNumber.toLowerCase().includes(q) ||
+                p.primary.department.toLowerCase().includes(q)
+              );
+            }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+            if (profiles.length === 0) {
+              return (
+                <div className="bg-[#10161D] border border-[#1F2A33] p-8 text-center text-[#6B7680] text-sm">
+                  No registered users {registrationSearch ? 'match your search.' : 'yet.'}
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {profiles.map(p => (
+                  <div key={p.roll} className="bg-[#10161D] border border-[#1F2A33] p-4 font-mono">
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div>
+                        <div className="text-sm font-bold text-[#D4A93F] tracking-wider">{p.roll}</div>
+                        <div className="flex items-center gap-1.5 text-[10px] text-[#6B7680] mt-0.5">
+                          <Mail className="w-3 h-3" /> {p.email || 'N/A'}
+                        </div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-1 uppercase tracking-wider font-bold flex items-center gap-1 ${
+                        p.verified
+                          ? 'bg-[#2FBF71]/10 border border-[#2FBF71]/40 text-[#2FBF71]'
+                          : 'bg-[#D4A93F]/10 border border-[#D4A93F]/40 text-[#D4A93F]'
+                      }`}>
+                        {p.verified ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                        {p.verified ? 'Verified' : 'Pending'}
+                      </span>
+                    </div>
+
+                    <div className="border-t border-[#1F2A33] border-dashed pt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-[#6B7680] mb-1.5">Head Client</div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                        <div><span className="text-[#6B7680]">Name: </span><span className="text-[#F1F4F6]">{p.primary.name || '—'}</span></div>
+                        <div><span className="text-[#6B7680]">Dept: </span><span className="text-[#F1F4F6]">{p.primary.department || '—'}</span></div>
+                        <div><span className="text-[#6B7680]">Roll No: </span><span className="text-[#F1F4F6]">{p.primary.rollNumber || '—'}</span></div>
+                        <div><span className="text-[#6B7680]">Year: </span><span className="text-[#F1F4F6]">{p.primary.yearOfStudy || '—'}</span></div>
+                      </div>
+                    </div>
+
+                    {p.partner && (p.partner.name || p.partner.department || p.partner.rollNumber || p.partner.yearOfStudy) && (
+                      <div className="border-t border-[#1F2A33] border-dashed pt-3 mt-3">
+                        <div className="text-[10px] uppercase tracking-wider text-[#6B7680] mb-1.5">Sub / Partner Client</div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                          <div><span className="text-[#6B7680]">Name: </span><span className="text-[#C9D3D9]">{p.partner.name || '—'}</span></div>
+                          <div><span className="text-[#6B7680]">Dept: </span><span className="text-[#C9D3D9]">{p.partner.department || '—'}</span></div>
+                          <div><span className="text-[#6B7680]">Roll No: </span><span className="text-[#C9D3D9]">{p.partner.rollNumber || '—'}</span></div>
+                          <div><span className="text-[#6B7680]">Year: </span><span className="text-[#C9D3D9]">{p.partner.yearOfStudy || '—'}</span></div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border-t border-[#1F2A33] border-dashed pt-2 mt-3 text-[10px] text-[#6B7680] flex justify-between">
+                      <span>Registered: {p.createdAt ? new Date(p.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
+                      <span>Updated: {p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 

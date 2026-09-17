@@ -25,6 +25,7 @@ import {
   saveStudentProfileToFirestore,
   loadStudentProfileFromFirestore,
   deleteStudentProfileFromFirestore,
+  subscribeToAllStudentProfiles,
   defaultPortfolio,
   logOutUser,
   ensureAnonymousAuth,
@@ -70,6 +71,7 @@ export default function App() {
   
   // Teacher State (Roster of all students in Firestore)
   const [allStudents, setAllStudents] = useState<Portfolio[]>([]);
+  const [allStudentProfiles, setAllStudentProfiles] = useState<Record<string, StudentProfile>>({});
 
   // Navigation Tab State
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders'>('market');
@@ -470,6 +472,16 @@ export default function App() {
     if (userRole === 'teacher') {
       const unsubscribe = subscribeToAllStudents((studentsList) => {
         setAllStudents(studentsList);
+      });
+      return () => unsubscribe();
+    }
+  }, [userRole]);
+
+  // 4b. Subscribe to All Registered Student Profiles (KYC details) when Teacher is logged in
+  useEffect(() => {
+    if (userRole === 'teacher') {
+      const unsubscribe = subscribeToAllStudentProfiles((profiles) => {
+        setAllStudentProfiles(profiles);
       });
       return () => unsubscribe();
     }
@@ -1166,6 +1178,7 @@ export default function App() {
             ) : (
               <TeacherDashboard
                 students={allStudents}
+                studentProfiles={allStudentProfiles}
                 allStocks={stocks}
                 underlyings={underlyings}
                 onResetStudent={handleResetStudent}

@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, User as FirebaseUser } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -12,6 +12,8 @@ import {
   updateDoc,
   arrayUnion,
   arrayRemove,
+  query,
+  where,
   Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -459,4 +461,100 @@ export function subscribeToAllStudentProfiles(onUpdate: (profiles: Record<string
   }, (err) => {
     console.warn('Firestore student_profiles subscription warning:', err);
   });
+}
+
+// =================== STUDENT REGISTRATION: GOOGLE + EMAIL-LINK VERIFICATION ===================
+// Replaces the old roll-number/password student login. A student signs in with
+// their Google account, fills in their KYC details once, and verifies ownership
+// of that Google account's email via a Firebase-sent sign-in link (no OTP/SMTP
+// setup required - Firebase sends this email itself). Their generated Student ID
+// becomes their trading account key ("roll") going forward.
+
+// Generates a short, readable Student ID, e.g. "SW-7K3F9A"
+export function generateStudentId(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return `SW-${code}`;
+}
+
+// Generates a Student ID and confirms it isn't already in use before returning it.
+export async function generateUniqueStudentId(): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const candidate = generateStudentId();
+    const existing = await getDoc(doc(db, 'student_profiles', candidate));
+    if (!existing.exists()) return candidate;
+  }
+  // Astronomically unlikely fallback: timestamp-based suffix guarantees uniqueness
+  return `SW-${Date.now().toString(36).toUpperCase()}`;
+}
+
+export async function findStudentProfileByGoogleUid(uid: string): Promise<StudentProfile | null> {
+  const q = query(collection(db, 'student_profiles'), where('googleUid', '==', uid));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return snap.docs[0].data() as StudentProfile;
+}
+
+export async function findStudentProfileByEmail(email: string): Promise<StudentProfile | null> {
+  const q = query(collection(db, 'student_profiles'), where('email', '==', email.toLowerCase()));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return snap.docs[0].data() as StudentProfile;
+}
+
+// Sends the Firebase-hosted sign-in link to the student's email. `continueUrl`
+// is where Firebase redirects them back to after they click it (this app's own
+// URL) - handleCodeInApp keeps the whole flow inside this app rather than a
+// generic Firebase landing page.
+export async function sendStudentVerificationLink(email: string, continueUrl: string): Promise<void> {
+  await sendSignInLinkToEmail(auth, email, {
+    url: continueUrl,
+    handleCodeInApp: true
+  });
+}
+
+export function isStudentVerificationLink(url: string): boolean {
+  return isSignInWithEmailLink(auth, url);
+}
+
+export async function completeStudentVerificationLink(email: string, url: string): Promise<FirebaseUser> {
+  const cred = await signInWithEmailLink(auth, email, url);
+  return cred.user;
+}
+
+// Holds the KYC form (primary + optional partner details) between "send verification
+// link" and the student clicking it and returning to the app - keyed by email, in
+// Firestore (not localStorage) so it survives even if the link is opened in a new tab.
+export interface PendingRegistration {
+  email: string;
+  googleUid: string;
+  primary: PersonDetailsLike;
+  partner?: Partial<PersonDetailsLike>;
+  createdAt: number;
+}
+
+// Kept structurally identical to PersonDetails without importing it here to avoid a cycle;
+// App-level code passes the real PersonDetails type in, which is structurally compatible.
+interface PersonDetailsLike {
+  name: string;
+  department: string;
+  rollNumber: string;
+  yearOfStudy: string;
+}
+
+export async function savePendingRegistration(reg: PendingRegistration): Promise<void> {
+  const docRef = doc(db, 'pending_registrations', reg.email.toLowerCase());
+  await setDoc(docRef, stripUndefined({ ...reg, email: reg.email.toLowerCase() }));
+}
+
+export async function loadPendingRegistration(email: string): Promise<PendingRegistration | null> {
+  const docRef = doc(db, 'pending_registrations', email.toLowerCase());
+  const snap = await getDoc(docRef);
+  return snap.exists() ? (snap.data() as PendingRegistration) : null;
+}
+
+export async function deletePendingRegistration(email: string): Promise<void> {
+  const docRef = doc(db, 'pending_registrations', email.toLowerCase());
+  await deleteDoc(docRef);
 }
