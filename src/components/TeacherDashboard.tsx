@@ -700,9 +700,6 @@ ${bodyHtml}
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-[#6B7680] mt-1">
-                    {currentStudentData.portfolio.studentName || 'MBA Student'} • {currentStudentData.portfolio.email || 'Cloud Profile'}
-                  </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5">
