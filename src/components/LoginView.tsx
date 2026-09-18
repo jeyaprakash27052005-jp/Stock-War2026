@@ -153,7 +153,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onStudentLogin, onTeacherL
         {/* Note Footer */}
         <div className="text-center text-[11px] text-[#6B7680] p-4 border-t border-[#1F2A33] border-dashed">
           {activeTab === 'student'
-            ? 'Sign in with Google. Your identity is verified once by email link, then remembered.'
+            ? 'Sign in with Google to register or log back in. Your account is remembered for next time.'
             : 'Instructor mode enables real-time class inspection and market controls.'}
         </div>
       </div>

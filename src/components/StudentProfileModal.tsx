@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
 import { PersonDetails, StudentProfile } from '../types';
-import { User, Users } from 'lucide-react';
+import { User, Users, Plus, Trash2 } from 'lucide-react';
 
 interface StudentProfileModalProps {
   roll: string;
   initialProfile: StudentProfile | null;
   mandatory: boolean; // true = first-login, blocking, no close/cancel
-  onSave: (primary: PersonDetails, partner: Partial<PersonDetails>) => Promise<void>;
+  onSave: (primary: PersonDetails, nominees: Partial<PersonDetails>[]) => Promise<void>;
   onClose?: () => void;
 }
 
 const YEAR_OPTIONS = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'PG / Other'];
 
 const emptyDetails: PersonDetails = { name: '', department: '', rollNumber: '', yearOfStudy: '' };
+const emptyNominee: Partial<PersonDetails> = { name: '', department: '', rollNumber: '', yearOfStudy: '' };
 
 export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
   roll,
@@ -24,8 +25,10 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
   const [primary, setPrimary] = useState<PersonDetails>(
     initialProfile?.primary || { ...emptyDetails, rollNumber: roll }
   );
-  const [partner, setPartner] = useState<Partial<PersonDetails>>(
-    initialProfile?.partner || {}
+  const [nominees, setNominees] = useState<Partial<PersonDetails>[]>(
+    initialProfile?.nominees && initialProfile.nominees.length > 0
+      ? initialProfile.nominees
+      : []
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -33,9 +36,11 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
   const updatePrimary = (field: keyof PersonDetails, value: string) => {
     setPrimary(prev => ({ ...prev, [field]: value }));
   };
-  const updatePartner = (field: keyof PersonDetails, value: string) => {
-    setPartner(prev => ({ ...prev, [field]: value }));
+  const updateNominee = (index: number, field: keyof PersonDetails, value: string) => {
+    setNominees(prev => prev.map((n, i) => i === index ? { ...n, [field]: value } : n));
   };
+  const addNominee = () => setNominees(prev => [...prev, { ...emptyNominee }]);
+  const removeNominee = (index: number) => setNominees(prev => prev.filter((_, i) => i !== index));
 
   const handleSubmit = async () => {
     if (!primary.name.trim() || !primary.department.trim() || !primary.rollNumber.trim() || !primary.yearOfStudy.trim()) {
@@ -45,7 +50,11 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
     setError(null);
     setSaving(true);
     try {
-      await onSave(primary, partner);
+      // Drop any nominee rows the student left completely blank
+      const cleanedNominees = nominees.filter(n =>
+        (n.name || '').trim() || (n.department || '').trim() || (n.rollNumber || '').trim() || (n.yearOfStudy || '').trim()
+      );
+      await onSave(primary, cleanedNominees);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your profile. Please try again.');
     } finally {
@@ -135,56 +144,91 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
             </div>
           </div>
 
-          {/* Partner / sub details - optional */}
+          {/* Nominees - optional, unlimited */}
           <div>
-            <h4 className="text-xs uppercase font-bold tracking-wider text-[#6B7680] mb-1 flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" /> Partner / Team Member Details
-            </h4>
-            <p className="text-[10px] text-[#6B7680] mb-3 italic">Optional - fill in only if you're trading with a partner or team.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className={labelClass}>Full Name</label>
-                <input
-                  type="text"
-                  value={partner.name || ''}
-                  onChange={(e) => updatePartner('name', e.target.value)}
-                  placeholder="Optional"
-                  className={inputClass}
-                />
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="text-xs uppercase font-bold tracking-wider text-[#6B7680] flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> Team Members / Nominees
+              </h4>
+              <button
+                type="button"
+                onClick={addNominee}
+                className="text-[10px] uppercase font-bold tracking-wider text-[#D4A93F] hover:brightness-110 cursor-pointer flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" /> Add Nominee
+              </button>
+            </div>
+            <p className="text-[10px] text-[#6B7680] mb-3 italic">
+              Optional - add as many teammates as your group actually has, or none at all.
+            </p>
+
+            {nominees.length === 0 && (
+              <div className="text-[11px] text-[#3A4550] italic border border-dashed border-[#1F2A33] p-3 text-center">
+                No nominees added yet.
               </div>
-              <div>
-                <label className={labelClass}>Department</label>
-                <input
-                  type="text"
-                  value={partner.department || ''}
-                  onChange={(e) => updatePartner('department', e.target.value)}
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Roll Number</label>
-                <input
-                  type="text"
-                  value={partner.rollNumber || ''}
-                  onChange={(e) => updatePartner('rollNumber', e.target.value)}
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Year of Study</label>
-                <select
-                  value={partner.yearOfStudy || ''}
-                  onChange={(e) => updatePartner('yearOfStudy', e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">Select year</option>
-                  {YEAR_OPTIONS.map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
+            )}
+
+            <div className="space-y-3">
+              {nominees.map((nominee, index) => (
+                <div key={index} className="border border-[#1F2A33] p-3 relative">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase tracking-wider text-[#6B7680]">Nominee {index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeNominee(index)}
+                      title="Remove this nominee"
+                      className="text-[#E2564F] hover:brightness-110 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelClass}>Full Name</label>
+                      <input
+                        type="text"
+                        value={nominee.name || ''}
+                        onChange={(e) => updateNominee(index, 'name', e.target.value)}
+                        placeholder="Optional"
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Department</label>
+                      <input
+                        type="text"
+                        value={nominee.department || ''}
+                        onChange={(e) => updateNominee(index, 'department', e.target.value)}
+                        placeholder="Optional"
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Roll Number</label>
+                      <input
+                        type="text"
+                        value={nominee.rollNumber || ''}
+                        onChange={(e) => updateNominee(index, 'rollNumber', e.target.value)}
+                        placeholder="Optional"
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Year of Study</label>
+                      <select
+                        value={nominee.yearOfStudy || ''}
+                        onChange={(e) => updateNominee(index, 'yearOfStudy', e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="">Select year</option>
+                        {YEAR_OPTIONS.map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

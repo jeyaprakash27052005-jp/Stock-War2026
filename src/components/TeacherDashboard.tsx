@@ -1857,7 +1857,7 @@ ${bodyHtml}
               </h3>
               <p className="text-xs text-[#6B7680] mt-1">
                 Full KYC details collected at registration - Google account, verification status,
-                head client and optional partner/team member details.
+                head client and any registered team members/nominees.
               </p>
             </div>
             <input
@@ -1921,14 +1921,20 @@ ${bodyHtml}
                       </div>
                     </div>
 
-                    {p.partner && (p.partner.name || p.partner.department || p.partner.rollNumber || p.partner.yearOfStudy) && (
+                    {p.nominees && p.nominees.length > 0 && (
                       <div className="border-t border-[#1F2A33] border-dashed pt-3 mt-3">
-                        <div className="text-[10px] uppercase tracking-wider text-[#6B7680] mb-1.5">Sub / Partner Client</div>
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                          <div><span className="text-[#6B7680]">Name: </span><span className="text-[#C9D3D9]">{p.partner.name || '—'}</span></div>
-                          <div><span className="text-[#6B7680]">Dept: </span><span className="text-[#C9D3D9]">{p.partner.department || '—'}</span></div>
-                          <div><span className="text-[#6B7680]">Roll No: </span><span className="text-[#C9D3D9]">{p.partner.rollNumber || '—'}</span></div>
-                          <div><span className="text-[#6B7680]">Year: </span><span className="text-[#C9D3D9]">{p.partner.yearOfStudy || '—'}</span></div>
+                        <div className="text-[10px] uppercase tracking-wider text-[#6B7680] mb-1.5">
+                          Team Members / Nominees ({p.nominees.length})
+                        </div>
+                        <div className="space-y-2">
+                          {p.nominees.map((n, i) => (
+                            <div key={i} className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs border-l-2 border-[#1F2A33] pl-2">
+                              <div><span className="text-[#6B7680]">Name: </span><span className="text-[#C9D3D9]">{n.name || '—'}</span></div>
+                              <div><span className="text-[#6B7680]">Dept: </span><span className="text-[#C9D3D9]">{n.department || '—'}</span></div>
+                              <div><span className="text-[#6B7680]">Roll No: </span><span className="text-[#C9D3D9]">{n.rollNumber || '—'}</span></div>
+                              <div><span className="text-[#6B7680]">Year: </span><span className="text-[#C9D3D9]">{n.yearOfStudy || '—'}</span></div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}

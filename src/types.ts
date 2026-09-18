@@ -120,9 +120,10 @@ export interface PersonDetails {
 export interface StudentProfile {
   roll: string;
   primary: PersonDetails;
-  // Optional second/"sub header" set of the same details - e.g. a trading partner
-  // or team co-member. Every field here is optional; the section can be left blank.
-  partner?: Partial<PersonDetails>;
+  // Additional team members / nominees - same fields as primary, every one of
+  // them optional and there's no cap at 2: a team can list as many nominees
+  // as they actually have. Leave the array empty for a solo registration.
+  nominees?: Partial<PersonDetails>[];
   completed: boolean;
   createdAt: number;
   updatedAt: number;

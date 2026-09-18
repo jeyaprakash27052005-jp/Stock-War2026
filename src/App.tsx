@@ -558,20 +558,19 @@ export default function App() {
     setProfileMandatory(false);
   };
 
-  // Saves the student's profile (name/department/roll/year + optional partner details)
+  // Saves the student's profile (name/department/roll/year + optional nominee list)
   // to its own Firestore collection, separate from trading/portfolio data.
-  const handleSaveProfile = async (primary: PersonDetails, partner: Partial<PersonDetails>) => {
-    const hasPartnerDetails = Object.values(partner).some(v => (v || '').trim().length > 0);
+  const handleSaveProfile = async (primary: PersonDetails, nominees: Partial<PersonDetails>[]) => {
     const payload = {
       primary,
-      partner: hasPartnerDetails ? partner : undefined,
+      nominees,
       completed: true
     };
     await saveStudentProfileToFirestore(currentRoll, payload);
     setStudentProfile(prev => ({
       roll: currentRoll,
       primary,
-      partner: hasPartnerDetails ? partner : undefined,
+      nominees,
       completed: true,
       createdAt: prev?.createdAt || Date.now(),
       updatedAt: Date.now()

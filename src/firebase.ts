@@ -423,7 +423,7 @@ export async function removeFnoExpiryFromFirestore(sym: string, expiryMs: number
 
 // =================== STUDENT PROFILE (separate collection) ===================
 // Kept apart from 'portfolios' so profile/identity details (name, department,
-// roll number, year of study, optional partner details) are managed and
+// roll number, optional nominee list) are managed and
 // queried independently of trading data.
 
 export async function saveStudentProfileToFirestore(roll: string, profile: Partial<StudentProfile>): Promise<void> {
@@ -523,14 +523,14 @@ export async function completeStudentVerificationLink(email: string, url: string
   return cred.user;
 }
 
-// Holds the KYC form (primary + optional partner details) between "send verification
+// Holds the KYC form (primary + optional nominee list) between "send verification
 // link" and the student clicking it and returning to the app - keyed by email, in
 // Firestore (not localStorage) so it survives even if the link is opened in a new tab.
 export interface PendingRegistration {
   email: string;
   googleUid: string;
   primary: PersonDetailsLike;
-  partner?: Partial<PersonDetailsLike>;
+  nominees?: Partial<PersonDetailsLike>[];
   createdAt: number;
 }
 
