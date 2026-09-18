@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { inr } from '../marketData';
-import { Menu, X, User, BarChart2, Briefcase, Zap, History, LogOut, ChevronRight, TrendingUp, ShieldCheck } from 'lucide-react';
+import { MoreVertical, X, User, BarChart2, Briefcase, Zap, History, LogOut, ChevronRight, TrendingUp, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
   userRole: 'student' | 'teacher';
@@ -10,6 +10,7 @@ interface NavbarProps {
   email?: string;
   cash?: number;
   isFrozen?: boolean;
+  activeTab?: 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile';
   onLogout: () => void;
   onDeleteAccount?: () => void;
   onEditProfile?: () => void;
@@ -23,6 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   teamName,
   cash,
   isFrozen,
+  activeTab,
   onLogout,
   onEditProfile,
   onNavigateTab
@@ -50,17 +52,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <>
       <header className="flex items-center justify-between px-6 py-3.5 border-b border-[#1F2A33] bg-[#10161D] flex-wrap gap-3">
-        {/* Left Side Section: Menu Option, Brand, Profile Shortcut & Details */}
+        {/* Left Side Section: 3-Dot Navigation Menu Option, Brand, Profile & Details */}
         <div className="flex items-center gap-3">
           {userRole === 'student' && (
             <button
               type="button"
-              id="leftMenuToggleBtn"
+              id="left3DotMenuBtn"
               onClick={() => setMenuOpen(true)}
-              className="flex items-center gap-2 border border-[#1F2A33] hover:border-[#D4A93F] bg-[#141B23] text-[#F1F4F6] px-3 py-1.5 text-xs uppercase font-mono tracking-wider transition cursor-pointer hover:text-[#D4A93F]"
-              title="Open Navigation Menu"
+              className="flex items-center gap-1.5 border border-[#1F2A33] hover:border-[#D4A93F] bg-[#141B23] text-[#F1F4F6] px-2.5 py-1.5 text-xs uppercase font-mono tracking-wider transition cursor-pointer hover:text-[#D4A93F]"
+              title="Open Navigation Menu (3-Dot Menu)"
             >
-              <Menu className="w-4 h-4 text-[#D4A93F]" />
+              <MoreVertical className="w-4 h-4 text-[#D4A93F]" />
               <span className="font-bold hidden xs:inline">Menu</span>
             </button>
           )}
@@ -204,7 +206,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 type="button"
                 id="drawerMyProfileOption"
                 onClick={handleProfileClick}
-                className="w-full text-left px-4 py-3 text-xs flex items-center justify-between text-[#F1F4F6] hover:bg-[#1A232E] hover:text-[#D4A93F] transition border-l-2 border-transparent hover:border-[#D4A93F] cursor-pointer"
+                className={`w-full text-left px-4 py-3 text-xs flex items-center justify-between transition border-l-2 cursor-pointer ${
+                  activeTab === 'profile'
+                    ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
+                    : 'text-[#F1F4F6] hover:bg-[#1A232E] hover:text-[#D4A93F] border-transparent'
+                }`}
               >
                 <div className="flex items-center gap-3">
                   <User className="w-4 h-4 text-[#D4A93F]" />
@@ -213,7 +219,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <div className="text-[10px] text-[#6B7680]">Details &amp; Password Changes</div>
                   </div>
                 </div>
-                <ChevronRight className="w-4 h-4 text-[#6B7680]" />
+                {activeTab === 'profile' ? (
+                  <span className="text-[10px] bg-[#D4A93F]/20 text-[#D4A93F] px-1.5 py-0.5 border border-[#D4A93F]/40 font-bold">ACTIVE</span>
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-[#6B7680]" />
+                )}
               </button>
 
               <div className="px-3 pt-3 pb-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
@@ -225,61 +235,101 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <button
                     type="button"
                     onClick={() => handleTabClick('chart')}
-                    className="w-full text-left px-4 py-2.5 text-xs flex items-center justify-between text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] transition cursor-pointer"
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'chart'
+                        ? 'bg-[#18222C] text-[#00E676] border-[#00E676] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <TrendingUp className="w-4 h-4 text-[#00E676]" />
                       <span>Technical Chart (BSE / NSE)</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    {activeTab === 'chart' ? (
+                      <span className="text-[10px] text-[#00E676] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleTabClick('market')}
-                    className="w-full text-left px-4 py-2.5 text-xs flex items-center justify-between text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] transition cursor-pointer"
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'market'
+                        ? 'bg-[#18222C] text-[#5B9DD9] border-[#5B9DD9] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <BarChart2 className="w-4 h-4 text-[#5B9DD9]" />
                       <span>Market Watch</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    {activeTab === 'market' ? (
+                      <span className="text-[10px] text-[#5B9DD9] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleTabClick('portfolio')}
-                    className="w-full text-left px-4 py-2.5 text-xs flex items-center justify-between text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] transition cursor-pointer"
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'portfolio'
+                        ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <Briefcase className="w-4 h-4 text-[#D4A93F]" />
                       <span>Portfolio Holdings</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    {activeTab === 'portfolio' ? (
+                      <span className="text-[10px] text-[#D4A93F] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleTabClick('fno')}
-                    className="w-full text-left px-4 py-2.5 text-xs flex items-center justify-between text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] transition cursor-pointer"
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'fno'
+                        ? 'bg-[#18222C] text-[#9B6BD6] border-[#9B6BD6] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <Zap className="w-4 h-4 text-[#9B6BD6]" />
                       <span>F&amp;O Derivatives</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    {activeTab === 'fno' ? (
+                      <span className="text-[10px] text-[#9B6BD6] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleTabClick('orders')}
-                    className="w-full text-left px-4 py-2.5 text-xs flex items-center justify-between text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] transition cursor-pointer"
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'orders'
+                        ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <History className="w-4 h-4 text-[#6B7680]" />
                       <span>Order History</span>
                     </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    {activeTab === 'orders' ? (
+                      <span className="text-[10px] text-[#D4A93F] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
                   </button>
                 </>
               )}

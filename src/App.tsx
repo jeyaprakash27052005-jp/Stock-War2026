@@ -1027,6 +1027,7 @@ export default function App() {
             email={userEmail}
             cash={userRole === 'student' ? portfolio.cash : undefined}
             isFrozen={userRole === 'student' ? portfolio.isFrozen : false}
+            activeTab={userRole === 'student' ? activeTab : undefined}
             onLogout={handleLogout}
             onDeleteAccount={userRole === 'student' ? handleDeleteOwnAccount : undefined}
             onEditProfile={userRole === 'student' ? () => setActiveTab('profile') : undefined}
@@ -1049,83 +1050,6 @@ export default function App() {
                 <span className="font-bold uppercase tracking-wider">Account is freezed.</span>
                 <span className="text-[#C9D3D9]">Trading and squaring off positions are disabled. Please contact your instructor.</span>
               </div>
-            </div>
-          )}
-
-          {userRole === 'student' && (
-            <div className="border-b border-[#1F2A33] bg-[#10161D] px-6 flex gap-2 overflow-x-auto">
-              <button
-                type="button"
-                id="marketTabBtn"
-                onClick={() => setActiveTab('market')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'market'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                Market Watch
-              </button>
-              <button
-                type="button"
-                id="portfolioTabBtn"
-                onClick={() => setActiveTab('portfolio')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'portfolio'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                Portfolio
-              </button>
-              <button
-                type="button"
-                id="fnoTabBtn"
-                onClick={() => setActiveTab('fno')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'fno'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                F&amp;O
-              </button>
-              <button
-                type="button"
-                id="chartTabBtn"
-                onClick={() => setActiveTab('chart')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'chart'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                Chart
-              </button>
-              <button
-                type="button"
-                id="ordersTabBtn"
-                onClick={() => setActiveTab('orders')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'orders'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                Order History
-              </button>
-              <button
-                type="button"
-                id="profileTabBtn"
-                onClick={() => setActiveTab('profile')}
-                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'profile'
-                    ? 'border-[#D4A93F] text-[#D4A93F]'
-                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                My Profile
-              </button>
             </div>
           )}
 
