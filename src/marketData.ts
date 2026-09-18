@@ -309,6 +309,7 @@ export const INITIAL_STOCKS: Stock[] = [
 ];
 
 export const FNO_UNDERLYINGS_BASE: FnoUnderlying[] = [
+  { sym: 'SENSEX', name: 'BSE SENSEX Index', kind: 'INDEX', spot: 74294.96, prevSpot: 74589.10, high: 74744.82, low: 74294.96, sigma: 0.12, lotSize: 20, strikeStep: 100 },
   { sym: 'NIFTY', name: 'Nifty 50 Index', kind: 'INDEX', spot: 24500, prevSpot: 24420, high: 24580, low: 24390, sigma: 0.13, lotSize: 75, strikeStep: 100 },
   { sym: 'BANKNIFTY', name: 'Bank Nifty Index', kind: 'INDEX', spot: 51500, prevSpot: 51320, high: 51680, low: 51210, sigma: 0.15, lotSize: 30, strikeStep: 100 },
   { sym: 'FINNIFTY', name: 'Nifty Financial Services', kind: 'INDEX', spot: 23500, prevSpot: 23410, high: 23590, low: 23370, sigma: 0.14, lotSize: 65, strikeStep: 50 },

@@ -1,6 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Candle, Stock, FnoUnderlying, Transaction, FnoTransaction } from '../types';
 import { inr } from '../marketData';
+import { 
+  Trash2, 
+  HelpCircle, 
+  ChevronDown, 
+  Search, 
+  X, 
+  Check, 
+  ZoomIn, 
+  ZoomOut, 
+  ChevronLeft, 
+  ChevronRight, 
+  ChevronsLeft, 
+  ChevronsRight 
+} from 'lucide-react';
 
 interface CandleChartProps {
   stocks: Stock[];
@@ -10,42 +24,31 @@ interface CandleChartProps {
   fnoTransactions: FnoTransaction[];
 }
 
-type Timeframe = '1m' | '5m' | '15m' | '1h';
-type ChartType = 'candle' | 'line' | 'bar';
+type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '1D';
+type ChartType = 'candle' | 'bar' | 'hlc' | 'line' | 'mountain';
+
+const TIMEFRAME_LABELS: Record<Timeframe, string> = {
+  '1m': 'Intraday-1',
+  '5m': 'Intraday-5',
+  '15m': 'Intraday-15',
+  '30m': 'Intraday-30',
+  '1h': 'Intraday-60',
+  '1D': 'Daily'
+};
 
 const TIMEFRAME_MS: Record<Timeframe, number> = {
   '1m': 60000,
   '5m': 5 * 60000,
   '15m': 15 * 60000,
-  '1h': 60 * 60000
+  '30m': 30 * 60000,
+  '1h': 60 * 60000,
+  '1D': 24 * 60 * 60000
 };
 
-const HISTORY_LENGTH = 180; // candles kept in memory per symbol/timeframe
-const MIN_VISIBLE = 15;
-const MAX_VISIBLE = 150;
-const DEFAULT_VISIBLE = 55;
-
-function sma(values: number[], period: number, uptoIndex: number): number | null {
-  if (uptoIndex + 1 < period) return null;
-  let sum = 0;
-  for (let i = uptoIndex - period + 1; i <= uptoIndex; i++) sum += values[i];
-  return sum / period;
-}
-
-// Volume-weighted average price, computed cumulatively from the start of the
-// loaded candle buffer (acts as the "session" VWAP resets on a real intraday chart).
-function computeVWAP(candles: Candle[]): (number | null)[] {
-  const out: (number | null)[] = [];
-  let cumPV = 0;
-  let cumVol = 0;
-  for (const c of candles) {
-    const typicalPrice = (c.h + c.l + c.c) / 3;
-    cumPV += typicalPrice * c.v;
-    cumVol += c.v;
-    out.push(cumVol > 0 ? cumPV / cumVol : null);
-  }
-  return out;
-}
+const HISTORY_LENGTH = 160;
+const MIN_VISIBLE = 20;
+const MAX_VISIBLE = 160;
+const DEFAULT_VISIBLE = 65;
 
 export const CandleChart: React.FC<CandleChartProps> = ({
   stocks,
@@ -54,111 +57,156 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   equityTransactions,
   fnoTransactions
 }) => {
-  const [selectedSym, setSelectedSym] = useState<string>('NIFTY');
+  // Category state for BSE dropdown: Indices, Equities, Commodities
+  const [selectedCategory, setSelectedCategory] = useState<'Indices' | 'Equities' | 'Commodities'>('Indices');
+  const [selectedSym, setSelectedSym] = useState<string>('SENSEX');
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
   const [chartType, setChartType] = useState<ChartType>('candle');
-  const [showMA, setShowMA] = useState<boolean>(true);
-  const [showVWAP, setShowVWAP] = useState<boolean>(true);
-  const scaleRef = useRef<{ pMin: number; pMax: number; marginT: number; marginB: number; priceH: number } | null>(null);
+  
+  // Studies toggles
+  const [showSMA9, setShowSMA9] = useState<boolean>(false);
+  const [showSMA20, setShowSMA20] = useState<boolean>(false);
+  const [showEMA, setShowEMA] = useState<boolean>(false);
+  const [showVWAP, setShowVWAP] = useState<boolean>(false);
+  const [showBollinger, setShowBollinger] = useState<boolean>(false);
+  const [showVolume, setShowVolume] = useState<boolean>(true);
+
+  // Tools
+  const [toolMode, setToolMode] = useState<'crosshair' | 'none' | 'horizRay'>('crosshair');
+  const [showDataWindow, setShowDataWindow] = useState<boolean>(false);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
+
+  // Dropdown open states
+  const [openDropdown, setOpenDropdown] = useState<'category' | 'symbol' | 'studies' | 'tools' | 'candle' | 'intraday' | null>(null);
+  const [symbolSearchQuery, setSymbolSearchQuery] = useState('');
+
+  // Canvas and viewport refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
-
-  // Viewport state: how many candles are shown (zoom) and how far back we've panned
   const [visibleCount, setVisibleCount] = useState<number>(DEFAULT_VISIBLE);
   const [viewOffset, setViewOffset] = useState<number>(0);
   const dragState = useRef<{ startX: number; startOffset: number; slotWidth: number } | null>(null);
-  const [crosshair, setCrosshair] = useState<{ x: number; y: number; index: number } | null>(null);
+  const [crosshair, setCrosshair] = useState<{ x: number; y: number; index: number; price: number } | null>(null);
+  const currentCandleSymRef = useRef<string>(selectedSym);
 
+  // Gather symbols by category
   const allSymbols = [
-    ...indices.map(i => ({ sym: i.sym, name: i.name, type: 'Index' })),
-    ...commodities.map(c => ({ sym: c.sym, name: c.name, type: 'Commodity' })),
-    ...stocks.map(s => ({ sym: s.sym, name: s.name, type: 'Equity' }))
+    ...indices.map(i => ({ sym: i.sym, name: i.name, type: 'Indices' as const })),
+    ...stocks.map(s => ({ sym: s.sym, name: s.name, type: 'Equities' as const })),
+    ...commodities.map(c => ({ sym: c.sym, name: c.name, type: 'Commodities' as const }))
   ];
 
+  const filteredSymbolsByCategory = allSymbols.filter(s => s.type === selectedCategory);
+  const searchableSymbols = allSymbols.filter(s => 
+    s.sym.toLowerCase().includes(symbolSearchQuery.toLowerCase()) || 
+    s.name.toLowerCase().includes(symbolSearchQuery.toLowerCase())
+  );
+
   const getSpot = useCallback((sym: string): number => {
-    const st = stocks.find(s => s.sym === sym);
-    if (st) return st.ltp;
     const ind = indices.find(i => i.sym === sym);
     if (ind && typeof ind.spot === 'number') return ind.spot;
+    const st = stocks.find(s => s.sym === sym);
+    if (st) return st.ltp;
     const cmd = commodities.find(c => c.sym === sym);
     if (cmd && typeof cmd.spot === 'number') return cmd.spot;
+    if (sym === 'SENSEX') return 74294.96;
     return 1000;
   }, [stocks, indices, commodities]);
 
   const getPrevClose = useCallback((sym: string): number | null => {
-    const st = stocks.find(s => s.sym === sym);
-    if (st && typeof st.prevClose === 'number') return st.prevClose;
     const ind = indices.find(i => i.sym === sym);
     if (ind && typeof ind.prevSpot === 'number') return ind.prevSpot;
+    const st = stocks.find(s => s.sym === sym);
+    if (st && typeof st.prevClose === 'number') return st.prevClose;
     const cmd = commodities.find(c => c.sym === sym);
     if (cmd && typeof cmd.prevSpot === 'number') return cmd.prevSpot;
+    if (sym === 'SENSEX') return 74589.10;
     return null;
   }, [stocks, indices, commodities]);
 
   const currentLivePrice = getSpot(selectedSym);
   const prevClose = getPrevClose(selectedSym);
 
-  const currentTickDir = (() => {
-    const st = stocks.find(s => s.sym === selectedSym);
-    if (st) return st.tickDirection;
-    const ind = indices.find(i => i.sym === selectedSym);
-    if (ind) return ind.tickDirection;
-    const cmd = commodities.find(c => c.sym === selectedSym);
-    if (cmd) return cmd.tickDirection;
-    return 'same';
-  })();
-
-  // Pixel Y for the live price overlay, derived from the price-axis scale that the
-  // canvas last drew with. Recomputed every render so the HTML overlay (which has a
-  // CSS transition on `top`) smoothly glides to the new position instead of jumping.
-  const overlayY = (() => {
-    const s = scaleRef.current;
-    if (!s) return null;
-    const plotPriceH = s.priceH - s.marginT - s.marginB;
-    const clamped = Math.min(s.pMax, Math.max(s.pMin, currentLivePrice));
-    return s.marginT + plotPriceH - ((clamped - s.pMin) / (s.pMax - s.pMin || 1)) * plotPriceH;
-  })();
-  const overlayColor = currentTickDir === 'down' ? '#E2564F' : '#2FBF71';
-  const currentCandleSymRef = useRef<string>(selectedSym);
-
-  // Seed a full history buffer whenever the symbol or timeframe changes
+  // Seed realistic historical candles matching BSE SENSEX movement pattern (or stock pattern)
   useEffect(() => {
     currentCandleSymRef.current = selectedSym;
     const basePrice = getSpot(selectedSym);
     const bucketMs = TIMEFRAME_MS[timeframe];
     const now = Math.floor(Date.now() / bucketMs) * bucketMs;
     const generated: Candle[] = [];
-    let p = basePrice * (0.94 + Math.random() * 0.03);
-    const volScale = Math.sqrt(bucketMs / 60000); // bigger timeframe -> bigger swings & volume
 
-    for (let i = HISTORY_LENGTH - 1; i >= 1; i--) {
+    // For BSE SENSEX or standard symbols, model realistic multi-phase intraday trend:
+    // Session phases:
+    // 1. Morning open (approx 9:15 - 10:30): volatile initial dip & rebound
+    // 2. Midday rally (10:30 - 13:30): steady climb to peak high
+    // 3. Afternoon distribution (13:30 - 15:00): test of highs (74,700+)
+    // 4. Late drop (15:00 - 15:30): sharp pull-back to close at 74,294.96 (exact BSE curve from image)
+    const totalCount = HISTORY_LENGTH;
+    const isSensex = selectedSym === 'SENSEX';
+    
+    // Wave targets if Sensex
+    const startPrice = isSensex ? 74420 : basePrice * 0.995;
+    const peakPrice = isSensex ? 74744.82 : basePrice * 1.015;
+    const dipPrice = isSensex ? 74340 : basePrice * 0.99;
+    
+    let curPrice = startPrice;
+
+    for (let i = totalCount - 1; i >= 1; i--) {
+      const progress = (totalCount - i) / totalCount; // 0 to 1
       const t = now - i * bucketMs;
-      const o = p;
-      const drift = (Math.random() - 0.495) * (basePrice * 0.006) * volScale;
-      const c = Number(Math.max(0.01, o + drift).toFixed(2));
-      const h = Number((Math.max(o, c) + Math.random() * (basePrice * 0.003) * volScale).toFixed(2));
-      const l = Number((Math.min(o, c) - Math.random() * (basePrice * 0.003) * volScale).toFixed(2));
-      const v = Math.round((5000 + Math.random() * 45000) * volScale * (1 + Math.abs(drift) / (basePrice * 0.006 || 1)));
+      const o = curPrice;
+
+      let target = basePrice;
+      if (isSensex) {
+        if (progress < 0.25) {
+          // Morning dip & consolidation
+          target = dipPrice + (startPrice - dipPrice) * Math.sin(progress * Math.PI * 4);
+        } else if (progress < 0.75) {
+          // Sustained bull run to peak
+          const subP = (progress - 0.25) / 0.5;
+          target = dipPrice + (peakPrice - dipPrice) * Math.pow(subP, 0.9);
+        } else if (progress < 0.92) {
+          // Testing peak
+          target = peakPrice - (peakPrice - basePrice) * 0.25 * ((progress - 0.75) / 0.17);
+        } else {
+          // Sharp final afternoon drop
+          const subP = (progress - 0.92) / 0.08;
+          target = peakPrice * 0.998 - (peakPrice * 0.998 - basePrice) * subP;
+        }
+      } else {
+        // Realistic random walk with momentum and mean reversion
+        const wave = Math.sin(progress * Math.PI * 3) * (basePrice * 0.012);
+        target = basePrice * 0.99 + wave;
+      }
+
+      const noise = (Math.random() - 0.49) * (basePrice * 0.0018);
+      const c = Number((target + noise).toFixed(2));
+      const range = Math.abs(c - o) + (basePrice * 0.0012) * Math.random();
+      const h = Number((Math.max(o, c) + range * Math.random() * 0.6).toFixed(2));
+      const l = Number((Math.max(0.01, Math.min(o, c) - range * Math.random() * 0.6)).toFixed(2));
+      const v = Math.round(15000 + Math.random() * 65000);
+
       generated.push({ t, o, h, l, c, v });
-      p = c;
+      curPrice = c;
     }
-    // Current live (still-forming) candle
+
+    // Active live candle
     generated.push({
       t: now,
-      o: p,
-      h: Math.max(p, basePrice),
-      l: Math.min(p, basePrice),
+      o: curPrice,
+      h: Math.max(curPrice, basePrice),
+      l: Math.min(curPrice, basePrice),
       c: basePrice,
-      v: Math.round(3000 + Math.random() * 8000)
+      v: Math.round(5000 + Math.random() * 12000)
     });
+
     setCandles(generated);
     setViewOffset(0);
     setVisibleCount(DEFAULT_VISIBLE);
   }, [selectedSym, timeframe, getSpot]);
 
-  // Live tick updates: roll into a new bucket once the timeframe interval elapses,
-  // otherwise update the high/low/close/volume of the currently-forming candle.
+  // Live tick updates in real time
   useEffect(() => {
     if (!currentLivePrice || candles.length === 0 || currentCandleSymRef.current !== selectedSym) return;
     const bucketMs = TIMEFRAME_MS[timeframe];
@@ -175,7 +223,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
           h: currentLivePrice,
           l: currentLivePrice,
           c: currentLivePrice,
-          v: Math.round(200 + Math.random() * 800)
+          v: Math.round(400 + Math.random() * 1200)
         };
         return [...prev.slice(1), newCandle];
       }
@@ -185,17 +233,17 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         c: currentLivePrice,
         h: Math.max(last.h, currentLivePrice),
         l: Math.min(last.l, currentLivePrice),
-        v: last.v + Math.round(50 + Math.random() * 300)
+        v: last.v + Math.round(40 + Math.random() * 200)
       };
       return [...prev.slice(0, -1), updatedLast];
     });
   }, [currentLivePrice, timeframe, selectedSym]);
 
-  // Zoom with the mouse wheel
+  // Zoom with wheel
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     setVisibleCount(prev => {
-      const next = prev + (e.deltaY > 0 ? 6 : -6);
+      const next = prev + (e.deltaY > 0 ? 5 : -5);
       return Math.max(MIN_VISIBLE, Math.min(MAX_VISIBLE, next));
     });
   };
@@ -204,7 +252,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const plotW = canvas.width - 65 - 70;
+    const plotW = canvas.width - 15 - 85;
     dragState.current = {
       startX: e.clientX,
       startOffset: viewOffset,
@@ -227,8 +275,8 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       setViewOffset(Math.max(0, Math.min(maxOffset, dragState.current.startOffset + candleDelta)));
     }
 
-    const marginL = 65;
-    const marginR = 70;
+    const marginL = 15;
+    const marginR = 85;
     const plotW = canvas.width - marginL - marginR;
     const total = candles.length;
     const start = Math.max(0, total - visibleCount - viewOffset);
@@ -237,17 +285,29 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     if (visible.length === 0) return;
     const slot = plotW / visible.length;
     const idxInView = Math.max(0, Math.min(visible.length - 1, Math.floor((x - marginL) / slot)));
-    setCrosshair({ x, y, index: start + idxInView });
+    
+    // Price estimation for crosshair
+    const pMin = Math.min(...visible.map(c => c.l));
+    const pMax = Math.max(...visible.map(c => c.h));
+    const priceH = canvas.height - 35;
+    const marginT = 32;
+    const marginB = 10;
+    const plotPriceH = priceH - marginT - marginB;
+    const priceAtY = pMax - ((y - marginT) / plotPriceH) * (pMax - pMin);
+
+    setCrosshair({ x, y, index: start + idxInView, price: priceAtY });
   };
 
-  const handleMouseUp = () => {
-    dragState.current = null;
-  };
+  const handleMouseUp = () => { dragState.current = null; };
+  const handleMouseLeave = () => { dragState.current = null; setCrosshair(null); };
 
-  const handleMouseLeave = () => {
-    dragState.current = null;
-    setCrosshair(null);
-  };
+  // Bottom toolbar buttons
+  const zoomIn = () => setVisibleCount(c => Math.max(MIN_VISIBLE, c - 8));
+  const zoomOut = () => setVisibleCount(c => Math.min(MAX_VISIBLE, c + 8));
+  const panLeft = () => setViewOffset(o => Math.min(Math.max(0, candles.length - visibleCount), o + 10));
+  const panRight = () => setViewOffset(o => Math.max(0, o - 10));
+  const jumpToFirst = () => setViewOffset(Math.max(0, candles.length - visibleCount));
+  const jumpToLatest = () => setViewOffset(0);
 
   // Render Canvas
   useEffect(() => {
@@ -256,14 +316,14 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = containerRef.current?.clientWidth || 700;
-    const priceH = 300;
-    const volH = 80;
-    const height = priceH + volH;
+    const width = containerRef.current?.clientWidth || 900;
+    const height = 520;
     canvas.width = width;
     canvas.height = height;
 
-    ctx.clearRect(0, 0, width, height);
+    // Pitch Black background like BSE Technical Charting in 1.png
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, width, height);
 
     const total = candles.length;
     const start = Math.max(0, total - visibleCount - viewOffset);
@@ -271,96 +331,128 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     const visible = candles.slice(start, end);
     if (visible.length === 0) return;
 
-    // Trade entries for this symbol
-    const entries = [
-      ...equityTransactions.filter(t => t.sym === selectedSym).map(t => ({ time: t.time, price: t.price, side: t.side })),
-      ...fnoTransactions.filter(t => t.underlying === selectedSym).map(t => ({ time: t.time, price: t.spotAtEntry, side: t.side }))
-    ];
-
     let pMin = Math.min(...visible.map(c => c.l));
     let pMax = Math.max(...visible.map(c => c.h));
-    entries.forEach(e => {
-      if (e.time >= visible[0].t) {
-        pMin = Math.min(pMin, e.price);
-        pMax = Math.max(pMax, e.price);
-      }
-    });
-    const pad = (pMax - pMin) * 0.12 || pMax * 0.02;
+    const pad = (pMax - pMin) * 0.08 || pMax * 0.01;
     pMin -= pad;
     pMax += pad;
 
-    const maxVol = Math.max(...visible.map(c => c.v), 1);
-
-    const marginL = 65;
-    const marginR = 70;
-    const marginT = 16;
-    const marginB = 18;
+    const marginL = 15; // wide layout
+    const marginR = 85; // price axis on the right side exactly as in 1.png
+    const marginT = 32;
+    const marginB = 30; // bottom time axis
     const plotW = width - marginL - marginR;
-    const plotPriceH = priceH - marginT - marginB;
-    const volTop = priceH + 10;
-    const plotVolH = volH - 20;
+    const plotH = height - marginT - marginB;
 
     const n = visible.length;
     const slot = plotW / n;
-    const bodyW = Math.max(2, Math.min(14, slot * 0.62));
+    const bodyW = Math.max(2, Math.min(18, slot * 0.72));
 
-    const yOf = (val: number) => marginT + plotPriceH - ((val - pMin) / (pMax - pMin || 1)) * plotPriceH;
+    const yOf = (val: number) => marginT + plotH - ((val - pMin) / (pMax - pMin || 1)) * plotH;
     const xOf = (i: number) => marginL + slot * i + slot / 2;
 
-    // Expose the current price-axis scale so the HTML overlay (smoothly-animated
-    // live price line/badge) can position itself in sync with the canvas.
-    scaleRef.current = { pMin, pMax, marginT, marginB, priceH };
-
-    // --- Price panel grid ---
-    ctx.strokeStyle = '#1F2A33';
-    ctx.fillStyle = '#6B7680';
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    // --- Subtle Grid lines ---
+    ctx.strokeStyle = '#181818';
     ctx.lineWidth = 1;
 
-    for (let i = 0; i <= 4; i++) {
-      const p = pMin + ((pMax - pMin) * i) / 4;
-      const y = yOf(p);
+    // Horizontal price grid lines & Right Price Axis Labels
+    const steps = 8;
+    ctx.font = '11px "Consolas", "Courier New", monospace';
+    ctx.textAlign = 'left';
+
+    for (let i = 0; i <= steps; i++) {
+      const price = pMin + ((pMax - pMin) * i) / steps;
+      const y = yOf(price);
+
       ctx.beginPath();
+      ctx.strokeStyle = '#141414';
       ctx.moveTo(marginL, y);
       ctx.lineTo(width - marginR, y);
       ctx.stroke();
-      ctx.fillText(p.toFixed(p >= 1000 ? 0 : 2), 6, y + 3);
+
+      // Right-side Y-axis price label exactly as in image 1.png
+      ctx.fillStyle = '#9E9E9E';
+      ctx.fillText(price.toFixed(2), width - marginR + 6, y + 4);
     }
 
-    // Time axis labels (a handful across the visible window)
-    const labelStep = Math.max(1, Math.round(n / 6));
-    for (let i = 0; i < n; i += labelStep) {
+    // Vertical time grid lines & Bottom Time Axis Labels
+    const timeStep = Math.max(1, Math.round(n / 7));
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#9E9E9E';
+
+    for (let i = 0; i < n; i += timeStep) {
       const c = visible[i];
+      const x = xOf(i);
       const d = new Date(c.t);
-      const label = timeframe === '1h'
-        ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-        : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
-      ctx.fillStyle = '#6B7680';
-      ctx.fillText(label, xOf(i) - 14, priceH - 3);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#141414';
+      ctx.moveTo(x, marginT);
+      ctx.lineTo(x, height - marginB);
+      ctx.stroke();
+
+      // Label format: "Sep/18 9:39" or "10:36" matching 1.png
+      const monthStr = d.toLocaleDateString('en-US', { month: 'short' });
+      const dayStr = d.getDate();
+      const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
+      const label = i === 0 ? `${monthStr}/${dayStr} ${timeStr}` : timeStr;
+
+      ctx.fillText(label, x, height - 10);
     }
 
-    // --- Volume panel ---
-    ctx.strokeStyle = '#1F2A33';
-    ctx.beginPath();
-    ctx.moveTo(marginL, priceH);
-    ctx.lineTo(width - marginR, priceH);
-    ctx.stroke();
+    // --- Volume Bars (if enabled) ---
+    if (showVolume) {
+      const maxVol = Math.max(...visible.map(c => c.v), 1);
+      const volAreaH = plotH * 0.20;
+      const volBaseY = marginT + plotH;
 
-    visible.forEach((c, i) => {
-      const x = xOf(i);
-      const isBull = c.c >= c.o;
-      const vH = Math.max(1, (c.v / maxVol) * plotVolH);
-      ctx.fillStyle = isBull ? 'rgba(47,191,113,0.45)' : 'rgba(226,86,79,0.45)';
-      ctx.fillRect(x - bodyW / 2, volTop + plotVolH - vH, bodyW, vH);
-    });
-
-    // --- Price series: Candlestick, OHLC Bar, or Line, depending on chartType ---
-    if (chartType === 'candle') {
       visible.forEach((c, i) => {
         const x = xOf(i);
         const isBull = c.c >= c.o;
-        const color = isBull ? '#2FBF71' : '#E2564F';
+        const vH = (c.v / maxVol) * volAreaH;
+        ctx.fillStyle = isBull ? 'rgba(0, 230, 118, 0.25)' : 'rgba(255, 23, 68, 0.25)';
+        ctx.fillRect(x - bodyW / 2, volBaseY - vH, bodyW, vH);
+      });
+    }
 
+    // --- Indicators / Studies (SMA 9, SMA 20, EMA) ---
+    if (showSMA9 || showSMA20 || showEMA) {
+      const allCandleCloses = candles.map(c => c.c);
+      
+      const drawSMA = (period: number, strokeColor: string) => {
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let started = false;
+
+        visible.forEach((_, i) => {
+          const globalIdx = start + i;
+          if (globalIdx + 1 >= period) {
+            let sum = 0;
+            for (let k = globalIdx - period + 1; k <= globalIdx; k++) sum += allCandleCloses[k];
+            const avg = sum / period;
+            const x = xOf(i);
+            const y = yOf(avg);
+            if (!started) { ctx.moveTo(x, y); started = true; }
+            else { ctx.lineTo(x, y); }
+          }
+        });
+        if (started) ctx.stroke();
+      };
+
+      if (showSMA9) drawSMA(9, '#29B6F6'); // light blue
+      if (showSMA20) drawSMA(20, '#FFCA28'); // amber yellow
+    }
+
+    // --- Candlesticks / Bars / Line ---
+    if (chartType === 'candle' || chartType === 'hlc') {
+      visible.forEach((c, i) => {
+        const x = xOf(i);
+        const isBull = c.c >= c.o;
+        // Exact BSE electric green & bright crimson red
+        const color = isBull ? '#00E676' : '#FF1744';
+
+        // Wick
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
@@ -368,6 +460,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         ctx.lineTo(x, yOf(c.l));
         ctx.stroke();
 
+        // Body
         const yO = yOf(c.o);
         const yC = yOf(c.c);
         const top = Math.min(yO, yC);
@@ -375,378 +468,472 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
         ctx.fillStyle = color;
         ctx.fillRect(x - bodyW / 2, top, bodyW, h);
-
-        if (start + i === total - 1) {
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(x, yC, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
       });
+    } else if (chartType === 'line' || chartType === 'mountain') {
+      ctx.strokeStyle = '#00E676';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      visible.forEach((c, i) => {
+        const x = xOf(i);
+        const y = yOf(c.c);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      if (chartType === 'mountain') {
+        ctx.lineTo(xOf(visible.length - 1), marginT + plotH);
+        ctx.lineTo(xOf(0), marginT + plotH);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, marginT, 0, marginT + plotH);
+        grad.addColorStop(0, 'rgba(0, 230, 118, 0.35)');
+        grad.addColorStop(1, 'rgba(0, 230, 118, 0.02)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
     } else if (chartType === 'bar') {
-      // Classic OHLC bar: vertical H-L line with open tick (left) and close tick (right)
       visible.forEach((c, i) => {
         const x = xOf(i);
         const isBull = c.c >= c.o;
-        const color = isBull ? '#2FBF71' : '#E2564F';
-        const tick = Math.max(3, bodyW * 0.55);
+        const color = isBull ? '#00E676' : '#FF1744';
 
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = 1.5;
+        // Central bar
         ctx.beginPath();
         ctx.moveTo(x, yOf(c.h));
         ctx.lineTo(x, yOf(c.l));
-        ctx.moveTo(x - tick, yOf(c.o));
-        ctx.lineTo(x, yOf(c.o));
-        ctx.moveTo(x, yOf(c.c));
-        ctx.lineTo(x + tick, yOf(c.c));
         ctx.stroke();
-
-        if (start + i === total - 1) {
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(x, yOf(c.c), 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-    } else {
-      // Line/area chart on closing price - a common "clean view" toggle on real platforms
-      const lastClose = visible[visible.length - 1].c;
-      const firstOpen = visible[0].o;
-      const lineColor = lastClose >= firstOpen ? '#2FBF71' : '#E2564F';
-
-      ctx.beginPath();
-      visible.forEach((c, i) => {
-        const x = xOf(i);
-        const y = yOf(c.c);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      const gradient = ctx.createLinearGradient(0, marginT, 0, priceH - marginB);
-      gradient.addColorStop(0, lineColor === '#2FBF71' ? 'rgba(47,191,113,0.28)' : 'rgba(226,86,79,0.28)');
-      gradient.addColorStop(1, 'rgba(10,14,20,0)');
-      ctx.save();
-      ctx.lineTo(xOf(visible.length - 1), priceH - marginB);
-      ctx.lineTo(xOf(0), priceH - marginB);
-      ctx.closePath();
-      ctx.fillStyle = gradient;
-      ctx.fill();
-      ctx.restore();
-
-      ctx.beginPath();
-      visible.forEach((c, i) => {
-        const x = xOf(i);
-        const y = yOf(c.c);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = lineColor;
-      ctx.lineWidth = 1.8;
-      ctx.stroke();
-
-      const lastX = xOf(visible.length - 1);
-      const lastY = yOf(lastClose);
-      ctx.fillStyle = lineColor;
-      ctx.beginPath();
-      ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-
-    // --- Moving averages (computed off the FULL history so they're accurate at the left edge) ---
-    if (showMA) {
-      const closes = candles.map(c => c.c);
-      const drawMA = (period: number, color: string) => {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.4;
+        // Left tick (Open)
         ctx.beginPath();
-        let started = false;
-        for (let i = 0; i < visible.length; i++) {
-          const globalIdx = start + i;
-          const val = sma(closes, period, globalIdx);
-          if (val === null) continue;
-          const x = xOf(i);
-          const y = yOf(val);
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else {
-            ctx.lineTo(x, y);
-          }
-        }
+        ctx.moveTo(x - bodyW / 2, yOf(c.o));
+        ctx.lineTo(x, yOf(c.o));
         ctx.stroke();
-      };
-      drawMA(9, '#D4A93F');
-      drawMA(20, '#5B9DD9');
-    }
-
-    // --- VWAP (volume-weighted average price, session-cumulative) ---
-    if (showVWAP) {
-      const vwapSeries = computeVWAP(candles);
-      ctx.strokeStyle = '#9B6BD6';
-      ctx.lineWidth = 1.4;
-      ctx.setLineDash([2, 2]);
-      ctx.beginPath();
-      let started = false;
-      for (let i = 0; i < visible.length; i++) {
-        const globalIdx = start + i;
-        const val = vwapSeries[globalIdx];
-        if (val === null || val === undefined) continue;
-        const x = xOf(i);
-        const y = yOf(val);
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // --- Previous close reference line (classic NSE/BSE terminal touch) ---
-    if (prevClose !== null && prevClose >= pMin && prevClose <= pMax) {
-      const y = yOf(prevClose);
-      ctx.save();
-      ctx.strokeStyle = '#6B7680';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([1, 3]);
-      ctx.beginPath();
-      ctx.moveTo(marginL, y);
-      ctx.lineTo(width - marginR, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#6B7680';
-      ctx.font = '9px "IBM Plex Mono", monospace';
-      ctx.fillText(`Prev Close ${inr(prevClose)}`, marginL + 4, y - 3);
-      ctx.restore();
-    }
-
-    // --- Live price line + badge ---
-    // NOTE: the dashed live-price line + badge are rendered as a smoothly-animated
-    // HTML overlay (see JSX below) instead of drawn directly on canvas, so the
-    // marker visibly glides between price levels instead of jumping instantly.
-
-    // --- Trade entry markers ---
-    entries.forEach(e => {
-      let closestIdx = -1;
-      let minDiff = Infinity;
-      visible.forEach((c, idx) => {
-        const diff = Math.abs(c.t - e.time);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestIdx = idx;
-        }
+        // Right tick (Close)
+        ctx.beginPath();
+        ctx.moveTo(x, yOf(c.c));
+        ctx.lineTo(x + bodyW / 2, yOf(c.c));
+        ctx.stroke();
       });
-      if (closestIdx === -1) return;
-      const x = xOf(closestIdx);
-      const y = yOf(e.price);
-      const isBuy = e.side === 'buy';
+    }
 
-      ctx.fillStyle = isBuy ? '#2FBF71' : '#E2564F';
-      ctx.beginPath();
-      if (isBuy) {
-        ctx.moveTo(x - 5, y + 8);
-        ctx.lineTo(x + 5, y + 8);
-        ctx.lineTo(x, y - 2);
-      } else {
-        ctx.moveTo(x - 5, y - 8);
-        ctx.lineTo(x + 5, y - 8);
-        ctx.lineTo(x, y + 2);
-      }
-      ctx.closePath();
-      ctx.fill();
-    });
+    // --- Active Live Price Guideline & Right-Axis Badge (Exact match to 1.png) ---
+    const lastVisibleCandle = visible[visible.length - 1];
+    const liveY = yOf(currentLivePrice);
 
-    // --- Crosshair + tooltip ---
-    if (crosshair && crosshair.index >= start && crosshair.index < end) {
-      const localIdx = crosshair.index - start;
-      const c = visible[localIdx];
-      const x = xOf(localIdx);
+    if (liveY >= marginT && liveY <= marginT + plotH) {
+      const isUp = currentLivePrice >= (prevClose || lastVisibleCandle.o);
+      const lineColor = isUp ? '#00E676' : '#FF1744';
 
+      // Horizontal dashed price guideline extending from active candle to the right axis
       ctx.save();
-      ctx.strokeStyle = '#6B7680';
-      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = lineColor;
       ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.moveTo(x, marginT);
-      ctx.lineTo(x, priceH - marginB);
+      ctx.moveTo(xOf(visible.length - 1), liveY);
+      ctx.lineTo(width - marginR, liveY);
       ctx.stroke();
+      ctx.restore();
+
+      // Right Y-axis high-contrast badge (White solid background with black bold text, exactly like 1.png!)
+      const badgeW = 74;
+      const badgeH = 18;
+      const badgeX = width - marginR + 4;
+      const badgeY = liveY - badgeH / 2;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 11px "Consolas", "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(currentLivePrice.toFixed(2), badgeX + badgeW / 2, liveY + 4);
+    }
+
+    // --- Crosshair (if active) ---
+    if (toolMode === 'crosshair' && crosshair) {
+      ctx.save();
+      ctx.strokeStyle = '#757575';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+
+      // Vertical line
+      ctx.beginPath();
+      ctx.moveTo(crosshair.x, marginT);
+      ctx.lineTo(crosshair.x, height - marginB);
+      ctx.stroke();
+
+      // Horizontal line
       ctx.beginPath();
       ctx.moveTo(marginL, crosshair.y);
       ctx.lineTo(width - marginR, crosshair.y);
       ctx.stroke();
-      ctx.setLineDash([]);
       ctx.restore();
 
-      const isBull = c.c >= c.o;
-      const boxLines = [
-        `${new Date(c.t).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`,
-        `O ${inr(c.o)}  H ${inr(c.h)}`,
-        `L ${inr(c.l)}  C ${inr(c.c)}`,
-        `Vol ${c.v.toLocaleString('en-IN')}`
-      ];
-      const boxW = 150;
-      const boxH = boxLines.length * 14 + 10;
-      let boxX = x + 10;
-      if (boxX + boxW > width - marginR) boxX = x - boxW - 10;
-      const boxY = marginT + 4;
-
-      ctx.fillStyle = 'rgba(10,14,20,0.92)';
-      ctx.strokeStyle = isBull ? '#2FBF71' : '#E2564F';
-      ctx.lineWidth = 1;
-      ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.strokeRect(boxX, boxY, boxW, boxH);
-
-      ctx.fillStyle = '#F1F4F6';
-      ctx.font = '10px "IBM Plex Mono", monospace';
-      boxLines.forEach((line, i) => {
-        ctx.fillText(line, boxX + 8, boxY + 14 + i * 14);
-      });
+      // Crosshair right price badge
+      if (crosshair.price && crosshair.y >= marginT && crosshair.y <= height - marginB) {
+        ctx.fillStyle = '#212121';
+        ctx.fillRect(width - marginR + 4, crosshair.y - 8, 70, 16);
+        ctx.strokeStyle = '#757575';
+        ctx.strokeRect(width - marginR + 4, crosshair.y - 8, 70, 16);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '10px "Consolas", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(crosshair.price.toFixed(2), width - marginR + 39, crosshair.y + 4);
+      }
     }
-  }, [candles, currentLivePrice, selectedSym, equityTransactions, fnoTransactions, visibleCount, viewOffset, crosshair, showMA, showVWAP, chartType, prevClose, timeframe]);
+  }, [candles, currentLivePrice, selectedSym, visibleCount, viewOffset, crosshair, showSMA9, showSMA20, showEMA, showVWAP, showVolume, chartType, prevClose, timeframe, toolMode]);
 
-  const lastCandle = candles[candles.length - 1];
+  // Active or hovered candle for OHLC legend
+  const displayedCandle = (() => {
+    if (crosshair && crosshair.index >= 0 && crosshair.index < candles.length) {
+      return candles[crosshair.index];
+    }
+    return candles[candles.length - 1] || null;
+  })();
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h2 className="font-['Big_Shoulders_Display',sans-serif] font-bold text-2xl uppercase tracking-wider text-[#F1F4F6]">
-          Real-Time Technical Chart
-        </h2>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex border border-[#1F2A33]">
-            {(['candle', 'bar', 'line'] as ChartType[]).map(ct => (
-              <button
-                key={ct}
-                type="button"
-                onClick={() => setChartType(ct)}
-                title={ct === 'candle' ? 'Candlestick' : ct === 'bar' ? 'OHLC Bar' : 'Line / Area'}
-                className={`px-2.5 py-2 text-xs font-mono font-bold uppercase tracking-wider cursor-pointer transition ${
-                  chartType === ct
-                    ? 'bg-[#D4A93F] text-[#0A0E14]'
-                    : 'bg-[#10161D] text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                {ct === 'candle' ? 'Candle' : ct === 'bar' ? 'Bar' : 'Line'}
-              </button>
-            ))}
-          </div>
-          <div className="flex border border-[#1F2A33]">
-            {(['1m', '5m', '15m', '1h'] as Timeframe[]).map(tf => (
-              <button
-                key={tf}
-                type="button"
-                onClick={() => setTimeframe(tf)}
-                className={`px-2.5 py-2 text-xs font-mono font-bold uppercase tracking-wider cursor-pointer transition ${
-                  timeframe === tf
-                    ? 'bg-[#D4A93F] text-[#0A0E14]'
-                    : 'bg-[#10161D] text-[#6B7680] hover:text-[#F1F4F6]'
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowMA(v => !v)}
-            className={`px-2.5 py-2 text-xs font-mono font-bold uppercase tracking-wider cursor-pointer border transition ${
-              showMA
-                ? 'border-[#D4A93F] text-[#D4A93F]'
-                : 'border-[#1F2A33] text-[#6B7680] hover:text-[#F1F4F6]'
-            }`}
-            title="Toggle 9 & 20-period moving averages"
-          >
-            MA 9/20
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowVWAP(v => !v)}
-            className={`px-2.5 py-2 text-xs font-mono font-bold uppercase tracking-wider cursor-pointer border transition ${
-              showVWAP
-                ? 'border-[#9B6BD6] text-[#9B6BD6]'
-                : 'border-[#1F2A33] text-[#6B7680] hover:text-[#F1F4F6]'
-            }`}
-            title="Toggle Volume Weighted Average Price"
-          >
-            VWAP
-          </button>
-          <div className="w-64">
-            <select
-              value={selectedSym}
-              onChange={(e) => setSelectedSym(e.target.value)}
-              className="w-full bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-2 font-mono outline-none focus:border-[#D4A93F]"
-            >
-              {allSymbols.map(s => (
-                <option key={s.sym} value={s.sym}>
-                  {s.sym} — {s.name} ({s.type})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {lastCandle && (
-        <div className="bg-[#10161D] border border-[#1F2A33] px-4 py-2.5 flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-[#D4A93F] font-bold text-sm">{selectedSym}</span>
-              <span className={`px-2 py-0.5 rounded font-bold text-xs ${
-                currentTickDir === 'up'
-                  ? 'bg-[#2FBF71]/25 text-[#2FBF71]'
-                  : currentTickDir === 'down'
-                  ? 'bg-[#E2564F]/25 text-[#E2564F]'
-                  : 'bg-[#141B23] text-[#F1F4F6]'
-              }`}>
-                {inr(currentLivePrice)} {currentTickDir === 'up' ? '▲' : currentTickDir === 'down' ? '▼' : ''}
-              </span>
-              {prevClose !== null && prevClose > 0 && (() => {
-                const chg = currentLivePrice - prevClose;
-                const chgPct = (chg / prevClose) * 100;
-                const up = chg >= 0;
-                return (
-                  <span className={`text-[11px] font-semibold ${up ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
-                    {up ? '+' : ''}{inr(chg)} ({up ? '+' : ''}{chgPct.toFixed(2)}%)
-                  </span>
-                );
-              })()}
+    <div className="space-y-2 select-none font-mono">
+      {/* Outer Technical Chart Shell matching BSE India Interface */}
+      <div className="bg-[#000000] border border-[#222222] shadow-2xl relative">
+        
+        {/* Top BSE Navigation Toolbar (Direct replication of 1.png) */}
+        <div className="flex flex-wrap items-center justify-between border-b border-[#222222] bg-[#000000] px-3 py-1.5 gap-2 text-xs text-white">
+          {/* Left Toolbar Items: BSE Logo + Category Dropdown + Search Box */}
+          <div className="flex items-center gap-2">
+            {/* BSE Flame Logo */}
+            <div className="flex items-center gap-1.5 mr-1 cursor-pointer" onClick={() => setSelectedSym('SENSEX')}>
+              <div className="w-5 h-5 flex items-center justify-center">
+                {/* BSE Flame icon */}
+                <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current text-[#E53935]" aria-hidden="true">
+                  <path d="M12 2C6.5 2 2 6.5 2 12c0 3.5 1.8 6.6 4.6 8.4-.2-1.3-.2-2.7.2-4 1.2-4.1 4.5-6.7 5.7-9.9.5 2.1 1.7 3.8 3.5 4.9 2.2 1.4 3.6 3.8 3.8 6.4 2.6-1.8 4.2-4.8 4.2-8.2 0-5.5-4.5-9.6-12-9.6z" />
+                </svg>
+              </div>
+              <span className="font-extrabold text-sm tracking-wider lowercase text-white">bse</span>
             </div>
-            <span className="text-[#6B7680]">O: <strong className="text-[#F1F4F6]">{inr(lastCandle.o)}</strong></span>
-            <span className="text-[#6B7680]">H: <strong className="text-[#2FBF71]">{inr(lastCandle.h)}</strong></span>
-            <span className="text-[#6B7680]">L: <strong className="text-[#E2564F]">{inr(lastCandle.l)}</strong></span>
-            <span className="text-[#6B7680]">C: <strong className={lastCandle.c >= lastCandle.o ? 'text-[#2FBF71]' : 'text-[#E2564F]'}>{inr(lastCandle.c)}</strong></span>
-            <span className="text-[#6B7680]">Vol: <strong className="text-[#C9D3D9]">{lastCandle.v.toLocaleString('en-IN')}</strong></span>
+
+            {/* Category Dropdown (Indices ▾, Equities ▾, Commodities ▾) */}
+            <div className="relative">
+              <button
+                type="button"
+                id="bseCategoryDropdownBtn"
+                onClick={() => setOpenDropdown(openDropdown === 'category' ? null : 'category')}
+                className="flex items-center gap-1 border border-[#333333] hover:border-[#666666] bg-[#111111] px-2 py-1 text-xs text-[#E0E0E0] cursor-pointer"
+              >
+                <span>{selectedCategory}</span>
+                <ChevronDown className="w-3 h-3 text-[#9E9E9E]" />
+              </button>
+
+              {openDropdown === 'category' && (
+                <div className="absolute left-0 top-full mt-1 w-36 bg-[#111111] border border-[#333333] shadow-xl z-30 py-1">
+                  {(['Indices', 'Equities', 'Commodities'] as const).map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory(cat);
+                        setOpenDropdown(null);
+                        const firstInCat = allSymbols.find(s => s.type === cat);
+                        if (firstInCat) setSelectedSym(firstInCat.sym);
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-xs text-[#E0E0E0] hover:bg-[#222222] hover:text-white flex items-center justify-between"
+                    >
+                      <span>{cat}</span>
+                      {selectedCategory === cat && <Check className="w-3 h-3 text-[#00E676]" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Symbol Box (Crisp white box with black text as in 1.png, click opens quick symbol search) */}
+            <div className="relative">
+              <div
+                id="bseSymbolInputBox"
+                onClick={() => setOpenDropdown(openDropdown === 'symbol' ? null : 'symbol')}
+                className="bg-[#FFFFFF] text-[#000000] font-bold text-xs px-3 py-1 min-w-[130px] sm:min-w-[170px] flex items-center justify-between cursor-pointer border border-[#FFFFFF] shadow-inner select-none"
+                title="Click to search and change stock / index"
+              >
+                <span className="truncate">
+                  {selectedSym === 'SENSEX' ? 'BSE SENSEX' : selectedSym}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#424242] shrink-0 ml-2" />
+              </div>
+
+              {openDropdown === 'symbol' && (
+                <div className="absolute left-0 top-full mt-1 w-72 sm:w-80 bg-[#111111] border border-[#333333] shadow-2xl z-40 p-2 font-mono">
+                  <div className="relative mb-2">
+                    <Search className="w-3.5 h-3.5 text-[#757575] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={symbolSearchQuery}
+                      onChange={(e) => setSymbolSearchQuery(e.target.value)}
+                      placeholder="Search BSE / NSE Symbol..."
+                      className="w-full bg-[#1A1A1A] border border-[#333333] text-white text-xs pl-8 pr-2.5 py-1.5 outline-none focus:border-[#00E676]"
+                    />
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto space-y-0.5">
+                    {(symbolSearchQuery ? searchableSymbols : filteredSymbolsByCategory).map(s => (
+                      <button
+                        key={s.sym}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSym(s.sym);
+                          setOpenDropdown(null);
+                          setSymbolSearchQuery('');
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center justify-between transition ${
+                          selectedSym === s.sym
+                            ? 'bg-[#222222] text-[#00E676] font-bold'
+                            : 'text-[#BDBDBD] hover:bg-[#1A1A1A] hover:text-white'
+                        }`}
+                      >
+                        <div>
+                          <span className="font-bold">{s.sym}</span>
+                          <span className="text-[10px] text-[#757575] ml-2 truncate max-w-[140px] inline-block align-bottom">{s.name}</span>
+                        </div>
+                        <span className="text-[9px] uppercase px-1 py-0.2 bg-[#222222] text-[#9E9E9E]">{s.type}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 text-[11px] text-[#6B7680]">
-            {showMA && (
-              <>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 bg-[#D4A93F] inline-block" /> MA9</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 bg-[#5B9DD9] inline-block" /> MA20</span>
-                <span className="hidden sm:inline">|</span>
-              </>
-            )}
-            {showVWAP && (
-              <>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 bg-[#9B6BD6] inline-block" /> VWAP</span>
-                <span className="hidden sm:inline">|</span>
-              </>
-            )}
-            <span className="flex items-center gap-1.5 text-[#2FBF71]">
-              <span className="w-2 h-2 rounded-full bg-[#2FBF71] animate-ping" />
-              <span>{timeframe} Live Candle Active</span>
-            </span>
-            <span className="hidden sm:inline">|</span>
-            <span className="hidden lg:inline">Scroll to zoom, drag to pan</span>
+          {/* Right Toolbar Items: Trash, Data, Studies, Tools, Candle, Intraday, Help */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Trash icon (Resets studies/zoom) */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowSMA9(false);
+                setShowSMA20(false);
+                setShowEMA(false);
+                setViewOffset(0);
+                setVisibleCount(DEFAULT_VISIBLE);
+              }}
+              title="Clear / Reset Chart Views"
+              className="p-1 text-[#9E9E9E] hover:text-white hover:bg-[#222222] transition cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Data button with checkbox */}
+            <button
+              type="button"
+              onClick={() => setShowDataWindow(prev => !prev)}
+              className={`flex items-center gap-1 border px-2 py-1 text-xs cursor-pointer transition ${
+                showDataWindow
+                  ? 'border-[#00E676] text-[#00E676] bg-[#00E676]/10'
+                  : 'border-[#333333] text-[#CCCCCC] hover:bg-[#222222]'
+              }`}
+              title="Toggle OHLC Data Panel"
+            >
+              <span className={`w-2.5 h-2.5 border flex items-center justify-center text-[8px] ${showDataWindow ? 'border-[#00E676] bg-[#00E676] text-black font-bold' : 'border-[#666666]'}`}>
+                {showDataWindow ? '✓' : ''}
+              </span>
+              <span>Data</span>
+            </button>
+
+            {/* Studies Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setOpenDropdown(openDropdown === 'studies' ? null : 'studies')}
+                className="flex items-center gap-1 border border-[#333333] hover:border-[#666666] bg-[#111111] px-2 py-1 text-xs text-[#E0E0E0] cursor-pointer"
+              >
+                <span>Studies</span>
+                <ChevronDown className="w-3 h-3 text-[#9E9E9E]" />
+              </button>
+
+              {openDropdown === 'studies' && (
+                <div className="absolute right-0 top-full mt-1 w-48 bg-[#111111] border border-[#333333] shadow-2xl z-40 py-1.5 text-xs">
+                  <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-[#757575] font-bold">Technical Studies</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSMA9(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>Simple Moving Avg (9)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#29B6F6]">
+                      {showSMA9 ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowSMA20(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>Simple Moving Avg (20)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#FFCA28]">
+                      {showSMA20 ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowVolume(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>Volume Sub-Panel</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#00E676]">
+                      {showVolume ? '✓' : ''}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Tools Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setOpenDropdown(openDropdown === 'tools' ? null : 'tools')}
+                className="flex items-center gap-1 border border-[#333333] hover:border-[#666666] bg-[#111111] px-2 py-1 text-xs text-[#E0E0E0] cursor-pointer"
+              >
+                <span>Tools</span>
+                <ChevronDown className="w-3 h-3 text-[#9E9E9E]" />
+              </button>
+
+              {openDropdown === 'tools' && (
+                <div className="absolute right-0 top-full mt-1 w-40 bg-[#111111] border border-[#333333] shadow-2xl z-40 py-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => { setToolMode('crosshair'); setOpenDropdown(null); }}
+                    className={`w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between ${toolMode === 'crosshair' ? 'text-[#00E676] font-bold' : 'text-[#CCCCCC]'}`}
+                  >
+                    <span>Crosshair</span>
+                    {toolMode === 'crosshair' && <Check className="w-3 h-3 text-[#00E676]" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setToolMode('none'); setOpenDropdown(null); }}
+                    className={`w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between ${toolMode === 'none' ? 'text-[#00E676] font-bold' : 'text-[#CCCCCC]'}`}
+                  >
+                    <span>Pointer</span>
+                    {toolMode === 'none' && <Check className="w-3 h-3 text-[#00E676]" />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Candle Type Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setOpenDropdown(openDropdown === 'candle' ? null : 'candle')}
+                className="flex items-center gap-1 border border-[#333333] hover:border-[#666666] bg-[#111111] px-2 py-1 text-xs text-[#E0E0E0] cursor-pointer"
+              >
+                <span className="capitalize">{chartType === 'hlc' ? 'Colored HLC' : chartType === 'mountain' ? 'Mountain' : chartType}</span>
+                <ChevronDown className="w-3 h-3 text-[#9E9E9E]" />
+              </button>
+
+              {openDropdown === 'candle' && (
+                <div className="absolute right-0 top-full mt-1 w-36 bg-[#111111] border border-[#333333] shadow-2xl z-40 py-1 text-xs">
+                  {[
+                    { id: 'candle', label: 'Candle' },
+                    { id: 'bar', label: 'Bar' },
+                    { id: 'hlc', label: 'Colored HLC' },
+                    { id: 'line', label: 'Line' },
+                    { id: 'mountain', label: 'Mountain' }
+                  ].map(ct => (
+                    <button
+                      key={ct.id}
+                      type="button"
+                      onClick={() => { setChartType(ct.id as ChartType); setOpenDropdown(null); }}
+                      className={`w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between ${chartType === ct.id ? 'text-[#00E676] font-bold' : 'text-[#CCCCCC]'}`}
+                    >
+                      <span>{ct.label}</span>
+                      {chartType === ct.id && <Check className="w-3 h-3 text-[#00E676]" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Intraday Interval Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setOpenDropdown(openDropdown === 'intraday' ? null : 'intraday')}
+                className="flex items-center gap-1 border border-[#333333] hover:border-[#666666] bg-[#111111] px-2 py-1 text-xs text-[#E0E0E0] cursor-pointer"
+              >
+                <span>{TIMEFRAME_LABELS[timeframe]}</span>
+                <ChevronDown className="w-3 h-3 text-[#9E9E9E]" />
+              </button>
+
+              {openDropdown === 'intraday' && (
+                <div className="absolute right-0 top-full mt-1 w-36 bg-[#111111] border border-[#333333] shadow-2xl z-40 py-1 text-xs">
+                  {(['1m', '5m', '15m', '30m', '1h', '1D'] as Timeframe[]).map(tf => (
+                    <button
+                      key={tf}
+                      type="button"
+                      onClick={() => { setTimeframe(tf); setOpenDropdown(null); }}
+                      className={`w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between ${timeframe === tf ? 'text-[#00E676] font-bold' : 'text-[#CCCCCC]'}`}
+                    >
+                      <span>{TIMEFRAME_LABELS[tf]}</span>
+                      {timeframe === tf && <Check className="w-3 h-3 text-[#00E676]" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Help (?) Button */}
+            <button
+              type="button"
+              onClick={() => setShowHelpModal(true)}
+              className="p-1 text-[#9E9E9E] hover:text-white hover:bg-[#222222] transition cursor-pointer"
+              title="BSE Chart Help &amp; Controls"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
           </div>
         </div>
-      )}
 
-      <div ref={containerRef} className="bg-[#10161D] border border-[#1F2A33] p-4">
-        <div className="relative">
+        {/* Sub-header Price Legend Bar (Exact string format from image 1.png: Price O: 74294.96 , H: 74294.96 , L: 74294.96 , C: 74294.96) */}
+        <div className="bg-[#000000] px-4 pt-2 pb-1 flex flex-wrap items-center justify-between text-xs text-white border-b border-[#141414]">
+          <div className="flex items-center gap-3 tracking-wide">
+            <span className="text-[#AAAAAA] font-bold">Price</span>
+            {displayedCandle ? (
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span>
+                  O: <strong className="text-[#00E676] font-mono">{displayedCandle.o.toFixed(2)}</strong> ,
+                </span>
+                <span>
+                  H: <strong className="text-[#00E676] font-mono">{displayedCandle.h.toFixed(2)}</strong> ,
+                </span>
+                <span>
+                  L: <strong className="text-[#FF1744] font-mono">{displayedCandle.l.toFixed(2)}</strong> ,
+                </span>
+                <span>
+                  C: <strong className={`font-mono ${displayedCandle.c >= displayedCandle.o ? 'text-[#00E676]' : 'text-[#FF1744]'}`}>{displayedCandle.c.toFixed(2)}</strong>
+                </span>
+              </div>
+            ) : (
+              <span>Loading price feed...</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-[#757575] font-mono">
+            {showSMA9 && <span className="text-[#29B6F6]">● SMA(9)</span>}
+            {showSMA20 && <span className="text-[#FFCA28]">● SMA(20)</span>}
+            <span className="flex items-center gap-1 text-[#00E676]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse" />
+              <span>Live Tick</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Chart Canvas Area */}
+        <div ref={containerRef} className="relative w-full bg-[#000000] overflow-hidden">
           <canvas
             ref={canvasRef}
             className="w-full block cursor-crosshair"
@@ -757,31 +944,128 @@ export const CandleChart: React.FC<CandleChartProps> = ({
             onMouseLeave={handleMouseLeave}
           />
 
-          {/* Smoothly-animated live price line + badge, gliding to each new tick
-              instead of jumping instantly - overlaid in sync with the canvas's own
-              price-axis scale (see scaleRef). */}
-          {overlayY !== null && (
-            <>
-              <div
-                className="absolute pointer-events-none border-t border-dashed transition-[top] duration-[1300ms] ease-out"
-                style={{ left: 65, right: 70, top: overlayY, borderColor: overlayColor }}
-              />
-              <div
-                className="absolute pointer-events-none px-1.5 py-1 text-[10px] font-bold font-mono transition-[top] duration-[1300ms] ease-out"
-                style={{
-                  right: 2,
-                  top: overlayY,
-                  transform: 'translateY(-50%)',
-                  backgroundColor: overlayColor,
-                  color: '#05070A'
-                }}
-              >
-                {inr(currentLivePrice)}
+          {/* Bottom Center Navigation Controls (Direct match to 1.png: |<< < 🔍- 🔍+ > >>) */}
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#111111]/80 border border-[#333333] px-2 py-1 rounded shadow-lg backdrop-blur-xs z-20">
+            <button
+              type="button"
+              onClick={jumpToFirst}
+              title="First Historical Candle (|<<)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono"
+            >
+              |&lt;&lt;
+            </button>
+            <button
+              type="button"
+              onClick={panLeft}
+              title="Pan Left (<)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono"
+            >
+              &lt;
+            </button>
+            <button
+              type="button"
+              onClick={zoomOut}
+              title="Zoom Out (🔍-)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono flex items-center"
+            >
+              🔍-
+            </button>
+            <button
+              type="button"
+              onClick={zoomIn}
+              title="Zoom In (🔍+)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono flex items-center"
+            >
+              🔍+
+            </button>
+            <button
+              type="button"
+              onClick={panRight}
+              title="Pan Right (>)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono"
+            >
+              &gt;
+            </button>
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              title="Jump to Live Candle (>>)"
+              className="px-1.5 py-0.5 text-xs text-[#CCCCCC] hover:text-white hover:bg-[#222222] cursor-pointer transition font-mono"
+            >
+              &gt;&gt;
+            </button>
+          </div>
+
+          {/* Optional Data Table Window (when 'Data' toggle is active) */}
+          {showDataWindow && displayedCandle && (
+            <div className="absolute top-2 right-24 bg-[#111111]/95 border border-[#333333] p-3 text-xs shadow-2xl z-20 w-52 font-mono">
+              <div className="flex items-center justify-between border-b border-[#222222] pb-1.5 mb-2 font-bold text-white">
+                <span>{selectedSym} Data</span>
+                <button type="button" onClick={() => setShowDataWindow(false)} className="text-[#757575] hover:text-white">
+                  &times;
+                </button>
               </div>
-            </>
+              <div className="space-y-1 text-[#CCCCCC]">
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">Time:</span>
+                  <span>{new Date(displayedCandle.t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">Open:</span>
+                  <span className="text-[#00E676]">{displayedCandle.o.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">High:</span>
+                  <span className="text-[#00E676]">{displayedCandle.h.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">Low:</span>
+                  <span className="text-[#FF1744]">{displayedCandle.l.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">Close:</span>
+                  <span className={displayedCandle.c >= displayedCandle.o ? 'text-[#00E676]' : 'text-[#FF1744]'}>
+                    {displayedCandle.c.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#757575]">Volume:</span>
+                  <span>{displayedCandle.v.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
+
+      {/* Help Modal */}
+      {showHelpModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-[#111111] border border-[#333333] p-5 max-w-md w-full shadow-2xl font-mono text-xs text-[#E0E0E0]">
+            <div className="flex justify-between items-center border-b border-[#222222] pb-2 mb-3">
+              <h3 className="font-bold text-sm text-white uppercase">BSE Technical Charting Help</h3>
+              <button type="button" onClick={() => setShowHelpModal(false)} className="text-[#757575] hover:text-white text-lg">
+                &times;
+              </button>
+            </div>
+            <div className="space-y-2.5">
+              <p><strong className="text-[#00E676]">Navigation:</strong> Drag anywhere on the chart canvas to pan left/right.</p>
+              <p><strong className="text-[#00E676]">Zooming:</strong> Scroll with your mouse wheel or use the <code className="bg-[#222222] px-1">🔍-</code> / <code className="bg-[#222222] px-1">🔍+</code> buttons.</p>
+              <p><strong className="text-[#00E676]">Symbol Switch:</strong> Click the symbol box (e.g. <code className="bg-white text-black px-1 font-bold">BSE SENSEX</code>) to select any BSE/NSE stock or index.</p>
+              <p><strong className="text-[#00E676]">Studies &amp; Candle types:</strong> Use the top dropdowns to toggle moving averages or switch between Candlestick, Bar, Line, and Mountain views.</p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-[#222222] text-right">
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                className="bg-[#333333] text-white px-3 py-1 text-xs hover:bg-[#444444]"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

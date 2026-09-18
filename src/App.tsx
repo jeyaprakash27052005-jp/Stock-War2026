@@ -1030,6 +1030,7 @@ export default function App() {
             onLogout={handleLogout}
             onDeleteAccount={userRole === 'student' ? handleDeleteOwnAccount : undefined}
             onEditProfile={userRole === 'student' ? () => setActiveTab('profile') : undefined}
+            onNavigateTab={userRole === 'student' ? (tab) => setActiveTab(tab) : undefined}
           />
 
           {userRole === 'student' && showProfileModal && (
