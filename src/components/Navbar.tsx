@@ -5,6 +5,7 @@ interface NavbarProps {
   userRole: 'student' | 'teacher';
   roll: string;
   studentName?: string;
+  teamName?: string;
   email?: string;
   cash?: number;
   isFrozen?: boolean;
@@ -17,6 +18,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   userRole,
   roll,
   studentName,
+  teamName,
   cash,
   isFrozen,
   onLogout,
@@ -32,8 +34,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="font-['IBM_Plex_Mono',monospace] text-xs text-[#6B7680] border border-[#1F2A33] px-2.5 py-1 tracking-wider">
             {userRole === 'teacher' ? 'INSTRUCTOR VIEW' : roll}
           </div>
+          {teamName && (
+            <span className="bg-[#D4A93F]/15 border border-[#D4A93F]/40 text-[#D4A93F] px-2 py-0.5 text-[11px] font-mono uppercase font-bold tracking-wider hidden sm:inline">
+              Team: {teamName}
+            </span>
+          )}
           {studentName && studentName !== roll && (
-            <span className="text-xs text-[#6B7680] hidden sm:inline">
+            <span className="text-xs text-[#6B7680] hidden md:inline">
               ({studentName})
             </span>
           )}

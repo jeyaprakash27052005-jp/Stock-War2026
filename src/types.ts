@@ -81,6 +81,7 @@ export interface FnoTransaction {
 
 export interface Portfolio {
   roll: string;
+  teamName?: string;
   studentName?: string;
   email?: string;
   cash: number;
@@ -119,6 +120,7 @@ export interface PersonDetails {
 
 export interface StudentProfile {
   roll: string;
+  teamName?: string;
   primary: PersonDetails;
   // Additional team members / nominees - same fields as primary, every one of
   // them optional and there's no cap at 2: a team can list as many nominees
@@ -127,9 +129,11 @@ export interface StudentProfile {
   completed: boolean;
   createdAt: number;
   updatedAt: number;
-  // Google + email-link registration (replaces the old roll/password student login)
+  // Google + email-link registration
   googleUid?: string;
   email?: string;
+  password?: string;
+  mustChangePassword?: boolean;
   verified?: boolean;
   verifiedAt?: number;
 }

@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { PersonDetails, StudentProfile } from '../types';
-import { User, Users, Plus, Trash2 } from 'lucide-react';
+import { User, Users, Plus, Trash2, Building2 } from 'lucide-react';
 
 interface StudentProfileModalProps {
   roll: string;
   initialProfile: StudentProfile | null;
   mandatory: boolean; // true = first-login, blocking, no close/cancel
-  onSave: (primary: PersonDetails, nominees: Partial<PersonDetails>[]) => Promise<void>;
+  onSave: (primary: PersonDetails, nominees: Partial<PersonDetails>[], teamName?: string) => Promise<void>;
   onClose?: () => void;
 }
 
@@ -22,6 +22,7 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
   onSave,
   onClose
 }) => {
+  const [teamName, setTeamName] = useState<string>(initialProfile?.teamName || '');
   const [primary, setPrimary] = useState<PersonDetails>(
     initialProfile?.primary || { ...emptyDetails, rollNumber: roll }
   );
@@ -54,7 +55,7 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
       const cleanedNominees = nominees.filter(n =>
         (n.name || '').trim() || (n.department || '').trim() || (n.rollNumber || '').trim() || (n.yearOfStudy || '').trim()
       );
-      await onSave(primary, cleanedNominees);
+      await onSave(primary, cleanedNominees, teamName.trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your profile. Please try again.');
     } finally {
@@ -92,6 +93,21 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
         </div>
 
         <div className="p-5 space-y-6">
+          {/* Team / Desk Name */}
+          <div className="bg-[#141B23] border border-[#1F2A33] p-3.5">
+            <label className={`${labelClass} text-[#D4A93F] font-bold flex items-center gap-1.5`}>
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Team / Desk Name</span>
+            </label>
+            <input
+              type="text"
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              placeholder="e.g. Alpha Traders or Solo Desk"
+              className={inputClass}
+            />
+          </div>
+
           {/* Primary / Student details */}
           <div>
             <h4 className="text-xs uppercase font-bold tracking-wider text-[#D4A93F] mb-3 flex items-center gap-1.5">

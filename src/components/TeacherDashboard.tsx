@@ -1875,6 +1875,7 @@ ${bodyHtml}
               if (!q) return true;
               return (
                 p.roll.toLowerCase().includes(q) ||
+                (p.teamName || '').toLowerCase().includes(q) ||
                 (p.email || '').toLowerCase().includes(q) ||
                 p.primary.name.toLowerCase().includes(q) ||
                 p.primary.rollNumber.toLowerCase().includes(q) ||
@@ -1896,7 +1897,14 @@ ${bodyHtml}
                   <div key={p.roll} className="bg-[#10161D] border border-[#1F2A33] p-4 font-mono">
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
-                        <div className="text-sm font-bold text-[#D4A93F] tracking-wider">{p.roll}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-[#D4A93F] tracking-wider">{p.roll}</span>
+                          {p.teamName && (
+                            <span className="text-[10px] bg-[#D4A93F]/10 border border-[#D4A93F]/30 text-[#D4A93F] px-1.5 py-0.2 font-bold uppercase">
+                              Team: {p.teamName}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1.5 text-[10px] text-[#6B7680] mt-0.5">
                           <Mail className="w-3 h-3" /> {p.email || 'N/A'}
                         </div>

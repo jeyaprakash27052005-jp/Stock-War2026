@@ -22,9 +22,10 @@ import { Portfolio, Stock, FnoUnderlying, StudentProfile, PersonDetails } from '
 
 export const STARTING_CASH = 1000000;
 
-export function defaultPortfolio(roll: string, studentName?: string, email?: string): Portfolio {
+export function defaultPortfolio(roll: string, studentName?: string, email?: string, teamName?: string): Portfolio {
   return {
     roll,
+    teamName: teamName || '',
     studentName: studentName || roll,
     email: email || '',
     cash: STARTING_CASH,
@@ -62,7 +63,10 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export async function signInWithGoogle(): Promise<FirebaseUser> {
-  const result = await signInWithPopup(auth, googleProvider);
+  const provider = new GoogleAuthProvider();
+  // Forces Google account selection dialog to display all available accounts
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(auth, provider);
   return result.user;
 }
 
@@ -481,23 +485,56 @@ export function subscribeToAllStudentProfiles(onUpdate: (profiles: Record<string
 // setup required - Firebase sends this email itself). Their generated Student ID
 // becomes their trading account key ("roll") going forward.
 
-// Generates a short, readable Student ID, e.g. "SW-7K3F9A"
+// Generates a sequential Student ID in the format "26SW01", "26SW02", etc.
 export function generateStudentId(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
-  let code = '';
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return `SW-${code}`;
+  return '26SW01';
 }
 
-// Generates a Student ID and confirms it isn't already in use before returning it.
+// Generates a Student ID in the format "26SW01", "26SW02", etc. and confirms it isn't already in use.
 export async function generateUniqueStudentId(): Promise<string> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const candidate = generateStudentId();
+  const prefix = '26SW';
+  try {
+    const snap = await getDocs(collection(db, 'student_profiles'));
+    const usedNumbers = new Set<number>();
+    snap.forEach((d) => {
+      const id = d.id.toUpperCase();
+      if (id.startsWith(prefix)) {
+        const numPart = parseInt(id.slice(prefix.length), 10);
+        if (!isNaN(numPart)) {
+          usedNumbers.add(numPart);
+        }
+      }
+    });
+
+    const portSnap = await getDocs(collection(db, 'portfolios'));
+    portSnap.forEach((d) => {
+      const id = d.id.toUpperCase();
+      if (id.startsWith(prefix)) {
+        const numPart = parseInt(id.slice(prefix.length), 10);
+        if (!isNaN(numPart)) {
+          usedNumbers.add(numPart);
+        }
+      }
+    });
+
+    for (let i = 1; i <= 9999; i++) {
+      if (!usedNumbers.has(i)) {
+        const numStr = i < 10 ? `0${i}` : `${i}`;
+        return `${prefix}${numStr}`;
+      }
+    }
+  } catch (err) {
+    console.warn('Error querying student profiles for sequence:', err);
+  }
+
+  // Fallback sequential check
+  for (let i = 1; i <= 999; i++) {
+    const numStr = i < 10 ? `0${i}` : `${i}`;
+    const candidate = `${prefix}${numStr}`;
     const existing = await getDoc(doc(db, 'student_profiles', candidate));
     if (!existing.exists()) return candidate;
   }
-  // Astronomically unlikely fallback: timestamp-based suffix guarantees uniqueness
-  return `SW-${Date.now().toString(36).toUpperCase()}`;
+  return `${prefix}01`;
 }
 
 export async function findStudentProfileByGoogleUid(uid: string): Promise<StudentProfile | null> {
@@ -614,16 +651,30 @@ export async function checkEmailRegistrationStatus(email: string): Promise<{
   }
 }
 
+// Generates a secure, readable auto-generated temporary password, e.g. "TRD#8492"
+export function generateAutoPassword(): string {
+  const prefixes = ['TRD', 'BULL', 'FOLIO', 'ALPHA', 'MKT', 'APEX'];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  const symbols = ['#', '@', '$', '!'];
+  const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+  return `${prefix}${symbol}${randomNum}`;
+}
+
 // Atomically registers a student and reserves their email (enforces one email = one account only)
 export async function registerStudentWithKyc(
   studentId: string,
   email: string,
   primary: PersonDetails,
   nominees: Partial<PersonDetails>[],
+  teamName: string,
+  autoPassword?: string,
   googleUid?: string
-): Promise<void> {
+): Promise<{ studentId: string; autoPassword: string }> {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedId = studentId.trim().toUpperCase();
+  const cleanTeamName = (teamName || '').trim();
+  const pass = autoPassword || generateAutoPassword();
 
   // 1. Strict duplicate check before writing
   const check = await checkEmailRegistrationStatus(normalizedEmail);
@@ -639,35 +690,114 @@ export async function registerStudentWithKyc(
     email: normalizedEmail,
     roll: normalizedId,
     studentName: primary.name,
+    teamName: cleanTeamName,
     registeredAt: Date.now()
   });
 
-  // 3. Save student profile
+  // 3. Save student profile with generated credentials and mustChangePassword flag
   await saveStudentProfileToFirestore(normalizedId, {
     roll: normalizedId,
+    teamName: cleanTeamName,
     primary,
     nominees,
     completed: true,
     googleUid: googleUid || '',
     email: normalizedEmail,
+    password: pass,
+    mustChangePassword: true,
     verified: true,
     verifiedAt: Date.now()
   });
 
-  // 4. Initialize portfolio with starting capital
+  // 4. Initialize portfolio with starting capital and team name
   const portDocRef = doc(db, 'portfolios', normalizedId);
   const existingPort = await getDoc(portDocRef);
   if (!existingPort.exists()) {
-    const initialPort = defaultPortfolio(normalizedId, primary.name, normalizedEmail);
+    const initialPort = defaultPortfolio(normalizedId, primary.name, normalizedEmail, cleanTeamName);
     await setDoc(portDocRef, initialPort);
   } else {
     await updateDoc(portDocRef, {
       studentName: primary.name,
+      teamName: cleanTeamName,
       email: normalizedEmail,
       isDeleted: false,
       lastActive: Date.now()
     });
   }
+
+  return { studentId: normalizedId, autoPassword: pass };
+}
+
+// Verifies student credentials (User ID / Roll / Email + Password) for registered users
+export async function verifyStudentCredentials(identifier: string, password: string): Promise<{
+  success: boolean;
+  profile?: StudentProfile;
+  mustChangePassword?: boolean;
+  error?: string;
+}> {
+  const cleanId = identifier.trim();
+  const cleanPass = password.trim();
+  if (!cleanId || !cleanPass) {
+    return { success: false, error: 'Please enter both your User ID / Email and Password.' };
+  }
+
+  let profile: StudentProfile | null = null;
+  if (cleanId.includes('@')) {
+    profile = await findStudentProfileByEmail(cleanId);
+  } else {
+    profile = await loadStudentProfileFromFirestore(cleanId.toUpperCase());
+    if (!profile) {
+      // Fallback search across student_profiles collection for roll or rollNumber
+      const allSnap = await getDocs(collection(db, 'student_profiles'));
+      for (const d of allSnap.docs) {
+        const p = d.data() as StudentProfile;
+        if (
+          p.roll?.toUpperCase() === cleanId.toUpperCase() ||
+          p.primary?.rollNumber?.toUpperCase() === cleanId.toUpperCase()
+        ) {
+          profile = p;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!profile) {
+    return { success: false, error: 'No student account found with this User ID or Email. Please register first.' };
+  }
+
+  if (!profile.password) {
+    return {
+      success: false,
+      error: 'This account does not have a password set. Please sign in with your registered Google email.'
+    };
+  }
+
+  if (profile.password !== cleanPass) {
+    return { success: false, error: 'Incorrect password. Please verify and try again.' };
+  }
+
+  return {
+    success: true,
+    profile,
+    mustChangePassword: !!profile.mustChangePassword
+  };
+}
+
+// Updates student password and clears the mustChangePassword flag
+export async function updateStudentPassword(roll: string, newPassword: string): Promise<void> {
+  const cleanRoll = roll.trim().toUpperCase();
+  const cleanPass = newPassword.trim();
+  if (cleanPass.length < 4) {
+    throw new Error('Password must be at least 4 characters long.');
+  }
+
+  const profileRef = doc(db, 'student_profiles', cleanRoll);
+  await updateDoc(profileRef, {
+    password: cleanPass,
+    mustChangePassword: false,
+    updatedAt: Date.now()
+  });
 }
 
 // Unregisters an email so it could potentially be re-registered (e.g. if instructor purged the student)

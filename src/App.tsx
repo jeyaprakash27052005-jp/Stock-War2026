@@ -559,17 +559,19 @@ export default function App() {
     setProfileMandatory(false);
   };
 
-  // Saves the student's profile (name/department/roll/year + optional nominee list)
+  // Saves the student's profile (name/department/roll/year + optional nominee list + teamName)
   // to its own Firestore collection, separate from trading/portfolio data.
-  const handleSaveProfile = async (primary: PersonDetails, nominees: Partial<PersonDetails>[]) => {
+  const handleSaveProfile = async (primary: PersonDetails, nominees: Partial<PersonDetails>[], teamName?: string) => {
     const payload = {
       primary,
       nominees,
+      teamName: teamName || '',
       completed: true
     };
     await saveStudentProfileToFirestore(currentRoll, payload);
     setStudentProfile(prev => ({
       roll: currentRoll,
+      teamName: teamName || prev?.teamName || '',
       primary,
       nominees,
       completed: true,
@@ -1006,6 +1008,7 @@ export default function App() {
             userRole={userRole}
             roll={currentRoll}
             studentName={studentName}
+            teamName={userRole === 'student' ? (studentProfile?.teamName || portfolio.teamName) : undefined}
             email={userEmail}
             cash={userRole === 'student' ? portfolio.cash : undefined}
             isFrozen={userRole === 'student' ? portfolio.isFrozen : false}
