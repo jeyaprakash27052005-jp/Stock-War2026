@@ -800,6 +800,43 @@ export async function updateStudentPassword(roll: string, newPassword: string): 
   });
 }
 
+// Validates current password against Firestore profile and updates to new password
+export async function changeStudentPassword(
+  roll: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanRoll = roll.trim().toUpperCase();
+  const cleanCurrent = currentPassword.trim();
+  const cleanNew = newPassword.trim();
+
+  if (!cleanRoll) {
+    return { success: false, error: 'User ID is missing.' };
+  }
+  if (!cleanCurrent) {
+    return { success: false, error: 'Please enter your current password.' };
+  }
+  if (cleanNew.length < 4) {
+    return { success: false, error: 'New password must be at least 4 characters long.' };
+  }
+  if (cleanCurrent === cleanNew) {
+    return { success: false, error: 'New password must be different from your current password.' };
+  }
+
+  const profile = await loadStudentProfileFromFirestore(cleanRoll);
+  if (!profile) {
+    return { success: false, error: 'Student account not found in database.' };
+  }
+
+  // If a password exists on the profile, ensure currentPassword matches
+  if (profile.password && profile.password !== cleanCurrent) {
+    return { success: false, error: 'Incorrect current password. Please verify and try again.' };
+  }
+
+  await updateStudentPassword(cleanRoll, cleanNew);
+  return { success: true };
+}
+
 // Unregisters an email so it could potentially be re-registered (e.g. if instructor purged the student)
 export async function unregisterEmailInFirestore(email: string): Promise<void> {
   const normalized = email.trim().toLowerCase();

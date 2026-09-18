@@ -47,6 +47,7 @@ import { CandleChart } from './components/CandleChart';
 import { OrderHistory } from './components/OrderHistory';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { StudentProfileModal } from './components/StudentProfileModal';
+import { StudentProfileView } from './components/StudentProfileView';
 
 export default function App() {
   // Market State
@@ -80,7 +81,7 @@ export default function App() {
   const [allStudentProfiles, setAllStudentProfiles] = useState<Record<string, StudentProfile>>({});
 
   // Navigation Tab State
-  const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders'>('market');
+  const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile'>('market');
 
   // Guards the one-time catalog seed so it only runs once per app load, not on every snapshot
   const catalogSeededRef = useRef(false);
@@ -1028,7 +1029,7 @@ export default function App() {
             isFrozen={userRole === 'student' ? portfolio.isFrozen : false}
             onLogout={handleLogout}
             onDeleteAccount={userRole === 'student' ? handleDeleteOwnAccount : undefined}
-            onEditProfile={userRole === 'student' ? () => { setProfileMandatory(false); setShowProfileModal(true); } : undefined}
+            onEditProfile={userRole === 'student' ? () => setActiveTab('profile') : undefined}
           />
 
           {userRole === 'student' && showProfileModal && (
@@ -1111,6 +1112,18 @@ export default function App() {
                 }`}
               >
                 Order History
+              </button>
+              <button
+                type="button"
+                id="profileTabBtn"
+                onClick={() => setActiveTab('profile')}
+                className={`py-3.5 px-4 text-xs uppercase font-bold tracking-wider border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  activeTab === 'profile'
+                    ? 'border-[#D4A93F] text-[#D4A93F]'
+                    : 'border-transparent text-[#6B7680] hover:text-[#F1F4F6]'
+                }`}
+              >
+                My Profile
               </button>
             </div>
           )}
@@ -1197,6 +1210,16 @@ export default function App() {
                   <OrderHistory
                     equityTransactions={portfolio.transactions || []}
                     fnoTransactions={portfolio.fno?.transactions || []}
+                  />
+                )}
+
+                {activeTab === 'profile' && (
+                  <StudentProfileView
+                    roll={currentRoll}
+                    profile={studentProfile}
+                    email={userEmail}
+                    teamName={studentProfile?.teamName || portfolio.teamName}
+                    onSaveProfile={handleSaveProfile}
                   />
                 )}
               </div>
