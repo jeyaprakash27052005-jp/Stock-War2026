@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, User as FirebaseUser } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -503,58 +503,3 @@ export async function findStudentProfileByEmail(email: string): Promise<StudentP
   return snap.docs[0].data() as StudentProfile;
 }
 
-// Sends the Firebase-hosted sign-in link to the student's email. `continueUrl`
-// is where Firebase redirects them back to after they click it (this app's own
-// URL) - handleCodeInApp keeps the whole flow inside this app rather than a
-// generic Firebase landing page.
-export async function sendStudentVerificationLink(email: string, continueUrl: string): Promise<void> {
-  await sendSignInLinkToEmail(auth, email, {
-    url: continueUrl,
-    handleCodeInApp: true
-  });
-}
-
-export function isStudentVerificationLink(url: string): boolean {
-  return isSignInWithEmailLink(auth, url);
-}
-
-export async function completeStudentVerificationLink(email: string, url: string): Promise<FirebaseUser> {
-  const cred = await signInWithEmailLink(auth, email, url);
-  return cred.user;
-}
-
-// Holds the KYC form (primary + optional nominee list) between "send verification
-// link" and the student clicking it and returning to the app - keyed by email, in
-// Firestore (not localStorage) so it survives even if the link is opened in a new tab.
-export interface PendingRegistration {
-  email: string;
-  googleUid: string;
-  primary: PersonDetailsLike;
-  nominees?: Partial<PersonDetailsLike>[];
-  createdAt: number;
-}
-
-// Kept structurally identical to PersonDetails without importing it here to avoid a cycle;
-// App-level code passes the real PersonDetails type in, which is structurally compatible.
-interface PersonDetailsLike {
-  name: string;
-  department: string;
-  rollNumber: string;
-  yearOfStudy: string;
-}
-
-export async function savePendingRegistration(reg: PendingRegistration): Promise<void> {
-  const docRef = doc(db, 'pending_registrations', reg.email.toLowerCase());
-  await setDoc(docRef, stripUndefined({ ...reg, email: reg.email.toLowerCase() }));
-}
-
-export async function loadPendingRegistration(email: string): Promise<PendingRegistration | null> {
-  const docRef = doc(db, 'pending_registrations', email.toLowerCase());
-  const snap = await getDoc(docRef);
-  return snap.exists() ? (snap.data() as PendingRegistration) : null;
-}
-
-export async function deletePendingRegistration(email: string): Promise<void> {
-  const docRef = doc(db, 'pending_registrations', email.toLowerCase());
-  await deleteDoc(docRef);
-}
