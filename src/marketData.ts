@@ -1,14 +1,33 @@
 import { Stock, FnoUnderlying } from './types';
 
 function tag(sector: string, arr: [string, string, number][]): Stock[] {
-  return arr.map(([sym, name, price]) => ({
-    sym,
-    name,
-    sector,
-    price,
-    prevClose: price,
-    ltp: price
-  }));
+  return arr.map(([sym, name, price]) => {
+    // Generate realistic, consistent trading day initial data
+    let seed = 0;
+    for (let i = 0; i < sym.length; i++) seed = (seed * 37 + sym.charCodeAt(i)) % 10000;
+    // Dispersion between -2.2% and +2.4%
+    const factor = ((seed % 100) - 46) / 2100;
+    const prevClose = Number((price / (1 + factor)).toFixed(2));
+    const open = Number((prevClose * (1 + factor * 0.35)).toFixed(2));
+    const range = price * (0.012 + ((seed % 50) / 5000));
+    const high = Number((Math.max(price, open, prevClose) + range * 0.75).toFixed(2));
+    const low = Number((Math.max(0.5, Math.min(price, open, prevClose) - range * 0.75)).toFixed(2));
+    const volume = 12000 + (seed % 65000);
+
+    return {
+      sym,
+      name,
+      sector,
+      price,
+      prevClose,
+      open,
+      high,
+      low,
+      volume,
+      ltp: price,
+      tickDirection: factor >= 0 ? 'up' : 'down'
+    };
+  });
 }
 
 const IT_STOCKS: [string, string, number][] = [
@@ -290,33 +309,33 @@ export const INITIAL_STOCKS: Stock[] = [
 ];
 
 export const FNO_UNDERLYINGS_BASE: FnoUnderlying[] = [
-  { sym: 'NIFTY', name: 'Nifty 50 Index', kind: 'INDEX', spot: 24500, sigma: 0.13, lotSize: 75, strikeStep: 100 },
-  { sym: 'BANKNIFTY', name: 'Bank Nifty Index', kind: 'INDEX', spot: 51500, sigma: 0.15, lotSize: 30, strikeStep: 100 },
-  { sym: 'FINNIFTY', name: 'Nifty Financial Services', kind: 'INDEX', spot: 23500, sigma: 0.14, lotSize: 65, strikeStep: 50 },
+  { sym: 'NIFTY', name: 'Nifty 50 Index', kind: 'INDEX', spot: 24500, prevSpot: 24420, high: 24580, low: 24390, sigma: 0.13, lotSize: 75, strikeStep: 100 },
+  { sym: 'BANKNIFTY', name: 'Bank Nifty Index', kind: 'INDEX', spot: 51500, prevSpot: 51320, high: 51680, low: 51210, sigma: 0.15, lotSize: 30, strikeStep: 100 },
+  { sym: 'FINNIFTY', name: 'Nifty Financial Services', kind: 'INDEX', spot: 23500, prevSpot: 23410, high: 23590, low: 23370, sigma: 0.14, lotSize: 65, strikeStep: 50 },
 
-  { sym: 'RELIANCE', name: 'Reliance Industries', kind: 'STOCK', sigma: 0.24, lotSize: 250, strikeStep: 20 },
-  { sym: 'TCS', name: 'Tata Consultancy Services', kind: 'STOCK', sigma: 0.20, lotSize: 150, strikeStep: 50 },
-  { sym: 'HDFCBANK', name: 'HDFC Bank', kind: 'STOCK', sigma: 0.19, lotSize: 550, strikeStep: 20 },
-  { sym: 'INFY', name: 'Infosys Ltd', kind: 'STOCK', sigma: 0.22, lotSize: 400, strikeStep: 20 },
-  { sym: 'SBIN', name: 'State Bank of India', kind: 'STOCK', sigma: 0.25, lotSize: 1500, strikeStep: 10 },
-  { sym: 'ICICIBANK', name: 'ICICI Bank', kind: 'STOCK', sigma: 0.22, lotSize: 700, strikeStep: 20 },
-  { sym: 'AXISBANK', name: 'Axis Bank', kind: 'STOCK', sigma: 0.24, lotSize: 625, strikeStep: 20 },
-  { sym: 'TATAMOTORS', name: 'Tata Motors', kind: 'STOCK', sigma: 0.30, lotSize: 1400, strikeStep: 20 },
-  { sym: 'MARUTI', name: 'Maruti Suzuki', kind: 'STOCK', sigma: 0.22, lotSize: 50, strikeStep: 200 },
-  { sym: 'BAJFINANCE', name: 'Bajaj Finance', kind: 'STOCK', sigma: 0.28, lotSize: 125, strikeStep: 100 },
-  { sym: 'ITC', name: 'ITC Ltd', kind: 'STOCK', sigma: 0.18, lotSize: 3200, strikeStep: 10 },
-  { sym: 'SUNPHARMA', name: 'Sun Pharma', kind: 'STOCK', sigma: 0.22, lotSize: 700, strikeStep: 20 },
-  { sym: 'HUL', name: 'Hindustan Unilever', kind: 'STOCK', sigma: 0.16, lotSize: 300, strikeStep: 50 },
-  { sym: 'LT', name: 'Larsen & Toubro', kind: 'STOCK', sigma: 0.22, lotSize: 150, strikeStep: 50 },
-  { sym: 'TITAN', name: 'Titan Company', kind: 'STOCK', sigma: 0.21, lotSize: 175, strikeStep: 50 },
+  { sym: 'RELIANCE', name: 'Reliance Industries', kind: 'STOCK', spot: 2890, prevSpot: 2872, high: 2915, low: 2862, sigma: 0.24, lotSize: 250, strikeStep: 20 },
+  { sym: 'TCS', name: 'Tata Consultancy Services', kind: 'STOCK', spot: 3850, prevSpot: 3835, high: 3880, low: 3820, sigma: 0.20, lotSize: 150, strikeStep: 50 },
+  { sym: 'HDFCBANK', name: 'HDFC Bank', kind: 'STOCK', spot: 1680, prevSpot: 1672, high: 1695, low: 1665, sigma: 0.19, lotSize: 550, strikeStep: 20 },
+  { sym: 'INFY', name: 'Infosys Ltd', kind: 'STOCK', spot: 1620, prevSpot: 1608, high: 1638, low: 1602, sigma: 0.22, lotSize: 400, strikeStep: 20 },
+  { sym: 'SBIN', name: 'State Bank of India', kind: 'STOCK', spot: 810, prevSpot: 804, high: 818, low: 801, sigma: 0.25, lotSize: 1500, strikeStep: 10 },
+  { sym: 'ICICIBANK', name: 'ICICI Bank', kind: 'STOCK', spot: 1150, prevSpot: 1142, high: 1162, low: 1138, sigma: 0.22, lotSize: 700, strikeStep: 20 },
+  { sym: 'AXISBANK', name: 'Axis Bank', kind: 'STOCK', spot: 1150, prevSpot: 1145, high: 1160, low: 1140, sigma: 0.24, lotSize: 625, strikeStep: 20 },
+  { sym: 'TATAMOTORS', name: 'Tata Motors', kind: 'STOCK', spot: 920, prevSpot: 912, high: 932, low: 908, sigma: 0.30, lotSize: 1400, strikeStep: 20 },
+  { sym: 'MARUTI', name: 'Maruti Suzuki', kind: 'STOCK', spot: 11200, prevSpot: 11120, high: 11310, low: 11080, sigma: 0.22, lotSize: 50, strikeStep: 200 },
+  { sym: 'BAJFINANCE', name: 'Bajaj Finance', kind: 'STOCK', spot: 7200, prevSpot: 7150, high: 7280, low: 7120, sigma: 0.28, lotSize: 125, strikeStep: 100 },
+  { sym: 'ITC', name: 'ITC Ltd', kind: 'STOCK', spot: 460, prevSpot: 457, high: 465, low: 455, sigma: 0.18, lotSize: 3200, strikeStep: 10 },
+  { sym: 'SUNPHARMA', name: 'Sun Pharma', kind: 'STOCK', spot: 1780, prevSpot: 1765, high: 1798, low: 1758, sigma: 0.22, lotSize: 700, strikeStep: 20 },
+  { sym: 'HUL', name: 'Hindustan Unilever', kind: 'STOCK', spot: 2450, prevSpot: 2435, high: 2472, low: 2428, sigma: 0.16, lotSize: 300, strikeStep: 50 },
+  { sym: 'LT', name: 'Larsen & Toubro', kind: 'STOCK', spot: 3600, prevSpot: 3575, high: 3635, low: 3560, sigma: 0.22, lotSize: 150, strikeStep: 50 },
+  { sym: 'TITAN', name: 'Titan Company', kind: 'STOCK', spot: 3650, prevSpot: 3625, high: 3685, low: 3610, sigma: 0.21, lotSize: 175, strikeStep: 50 },
 
-  { sym: 'GOLD', name: 'Gold (per 10g)', kind: 'COMMODITY', spot: 78000, sigma: 0.14, lotSize: 10, strikeStep: 500 },
-  { sym: 'SILVER', name: 'Silver (per kg)', kind: 'COMMODITY', spot: 92000, sigma: 0.20, lotSize: 5, strikeStep: 1000 },
-  { sym: 'CRUDEOIL', name: 'Crude Oil (per bbl)', kind: 'COMMODITY', spot: 6200, sigma: 0.30, lotSize: 10, strikeStep: 100 },
-  { sym: 'NATURALGAS', name: 'Natural Gas (per mmBtu)', kind: 'COMMODITY', spot: 245, sigma: 0.35, lotSize: 250, strikeStep: 5 },
-  { sym: 'COPPER', name: 'Copper (per kg)', kind: 'COMMODITY', spot: 820, sigma: 0.22, lotSize: 250, strikeStep: 10 },
-  { sym: 'ZINC', name: 'Zinc (per kg)', kind: 'COMMODITY', spot: 265, sigma: 0.24, lotSize: 500, strikeStep: 5 },
-  { sym: 'ALUMINIUM', name: 'Aluminium (per kg)', kind: 'COMMODITY', spot: 245, sigma: 0.20, lotSize: 500, strikeStep: 5 }
+  { sym: 'GOLD', name: 'Gold (per 10g)', kind: 'COMMODITY', spot: 78000, prevSpot: 77600, high: 78350, low: 77500, sigma: 0.14, lotSize: 10, strikeStep: 500 },
+  { sym: 'SILVER', name: 'Silver (per kg)', kind: 'COMMODITY', spot: 92000, prevSpot: 91400, high: 92600, low: 91200, sigma: 0.20, lotSize: 5, strikeStep: 1000 },
+  { sym: 'CRUDEOIL', name: 'Crude Oil (per bbl)', kind: 'COMMODITY', spot: 6200, prevSpot: 6160, high: 6265, low: 6140, sigma: 0.30, lotSize: 10, strikeStep: 100 },
+  { sym: 'NATURALGAS', name: 'Natural Gas (per mmBtu)', kind: 'COMMODITY', spot: 245, prevSpot: 242, high: 249, low: 241, sigma: 0.35, lotSize: 250, strikeStep: 5 },
+  { sym: 'COPPER', name: 'Copper (per kg)', kind: 'COMMODITY', spot: 820, prevSpot: 815, high: 827, low: 812, sigma: 0.22, lotSize: 250, strikeStep: 10 },
+  { sym: 'ZINC', name: 'Zinc (per kg)', kind: 'COMMODITY', spot: 265, prevSpot: 263, high: 268, low: 261, sigma: 0.24, lotSize: 500, strikeStep: 5 },
+  { sym: 'ALUMINIUM', name: 'Aluminium (per kg)', kind: 'COMMODITY', spot: 245, prevSpot: 243, high: 248, low: 241, sigma: 0.20, lotSize: 500, strikeStep: 5 }
 ];
 
 export const EXPIRY_DATE = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);

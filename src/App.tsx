@@ -52,6 +52,11 @@ export default function App() {
   // Market State
   const [stocks, setStocks] = useState<Stock[]>(INITIAL_STOCKS);
   const [underlyings, setUnderlyings] = useState<FnoUnderlying[]>(FNO_UNDERLYINGS_BASE);
+  const stocksRef = useRef<Stock[]>(stocks);
+  useEffect(() => {
+    stocksRef.current = stocks;
+  }, [stocks]);
+
   const indices = useMemo(() => underlyings.filter(u => u.kind === 'INDEX'), [underlyings]);
   const commodities = useMemo(() => underlyings.filter(u => u.kind === 'COMMODITY'), [underlyings]);
 
@@ -339,37 +344,52 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Real-time Live Price Ticker Simulation (slow, gentle exchange-feed pacing)
+  // 2. Real-time Live Price Ticker Simulation (continuous live exchange order-matching)
   useEffect(() => {
-    // 2.2s tick cadence - deliberately unhurried so price/chart movement reads as gentle drift
+    // 1000ms tick cadence - natural live exchange pacing with active order-flow
     const interval = setInterval(() => {
-      let updatedStockMap = new Map<string, Stock>();
+      const allUpdatedStocksMap = new Map<string, Stock>();
 
       setStocks(prev => {
         const nextStocks = prev.map(s => {
-          // ~38% probability of a tick per cycle - most symbols sit still most cycles
-          if (Math.random() > 0.38) {
-            return s.tickDirection !== 'same' ? { ...s, tickDirection: 'same' } : s;
+          // Large caps / active symbols tick ~72% of the time, others ~48%
+          const isHeavyweight = s.sym === 'RELIANCE' || s.sym === 'TCS' || s.sym === 'HDFCBANK' ||
+                                s.sym === 'INFY' || s.sym === 'ICICIBANK' || s.sym === 'SBIN' ||
+                                s.sym === 'TATAMOTORS' || s.sym === 'BAJFINANCE' || s.sym === 'ITC' ||
+                                s.sym === 'LT' || s.sym === 'MARUTI' || s.sym === 'BHARTIARTL' ||
+                                s.sym === 'KOTAKBANK' || s.sym === 'AXISBANK';
+          const tickChance = isHeavyweight ? 0.72 : 0.48;
+
+          if (Math.random() > tickChance) {
+            // Decay active tick direction smoothly to neutral 'same'
+            const stationaryStock = s.tickDirection !== 'same' ? { ...s, tickDirection: 'same' as const } : s;
+            allUpdatedStocksMap.set(s.sym, stationaryStock);
+            return stationaryStock;
           }
 
-          // Gentle price scale for slow, believable drift across all tiers
-          const priceScale = s.ltp > 10000 ? 9 : s.ltp > 3000 ? 3.5 : s.ltp > 1000 ? 1.6 : s.ltp > 300 ? 0.7 : s.ltp > 50 ? 0.3 : 0.12;
-          const rawDelta = (Math.random() - 0.495) * priceScale;
-          // Quantize to nearest 0.05 tick size
-          let tickSteps = Math.round(rawDelta / 0.05);
-          if (tickSteps === 0) {
-            tickSteps = Math.random() > 0.5 ? 1 : -1;
-          }
-          const tickAmount = tickSteps * 0.05;
+          // Realistic price step based on LTP quantized to standard ₹0.05 tick size
+          const maxSteps = s.ltp > 10000 ? 12 : s.ltp > 3000 ? 6 : s.ltp > 1000 ? 4 : s.ltp > 300 ? 2 : 1;
+          const randomSteps = Math.floor(Math.random() * maxSteps) + 1;
 
-          const newLtp = Math.max(0.5, Number((s.ltp + tickAmount).toFixed(2)));
-          const direction: 'up' | 'down' = newLtp > s.ltp ? 'up' : 'down';
-          const high = Math.max(s.high || s.ltp, newLtp);
-          const low = Math.min(s.low || s.ltp, newLtp);
-          const volumeIncrement = Math.floor(Math.random() * 120) + 5;
+          // Intraday mean reversion: keeps price natural within ±3.5% of previous close
+          const prevClose = s.prevClose || s.ltp;
+          const pctFromPrev = (s.ltp - prevClose) / (prevClose || 1);
+          let upProbability = 0.50;
+          if (pctFromPrev > 0.032) upProbability = 0.32;
+          else if (pctFromPrev < -0.032) upProbability = 0.68;
+          else upProbability = 0.50;
+
+          const isUp = Math.random() < upProbability;
+          const tickDelta = (isUp ? randomSteps : -randomSteps) * 0.05;
+
+          const newLtp = Math.max(0.5, Number((s.ltp + tickDelta).toFixed(2)));
+          const direction: 'up' | 'down' = newLtp >= s.ltp ? 'up' : 'down';
+          const high = Math.max(s.high ?? s.ltp, newLtp);
+          const low = Math.min(s.low ?? s.ltp, newLtp);
+          const volumeIncrement = Math.floor(Math.random() * 85) + 15;
           const volume = (s.volume || 15000) + volumeIncrement;
 
-          const updatedStock = {
+          const updatedStock: Stock = {
             ...s,
             ltp: newLtp,
             high,
@@ -377,10 +397,11 @@ export default function App() {
             volume,
             tickDirection: direction
           };
-          updatedStockMap.set(s.sym, updatedStock);
+          allUpdatedStocksMap.set(s.sym, updatedStock);
           return updatedStock;
         });
 
+        stocksRef.current = nextStocks;
         return nextStocks;
       });
 
@@ -389,56 +410,49 @@ export default function App() {
         return prev.map(u => {
           if (u.kind === 'INDEX') {
             const spot = u.spot || (u.sym === 'BANKNIFTY' ? 51500 : u.sym === 'FINNIFTY' ? 23500 : 24500);
-            // Gentle drift for F&O indices - roughly a third of the earlier "heightened" scale
-            const scale = u.sym === 'BANKNIFTY' ? 18 : u.sym === 'FINNIFTY' ? 9 : 8;
-            const rawStep = (Math.random() - 0.495) * scale;
-            let tickSteps = Math.round(rawStep / 0.05);
-            if (tickSteps === 0) {
-              tickSteps = Math.random() > 0.5 ? 1 : -1;
-            }
-            const tickAmount = tickSteps * 0.05;
-            const newSpot = Math.max(100, Number((spot + tickAmount).toFixed(2)));
+            const scale = u.sym === 'BANKNIFTY' ? 14 : u.sym === 'FINNIFTY' ? 8 : 6;
+            const steps = Math.floor(Math.random() * scale) + 1;
+            const isUp = Math.random() > 0.49;
+            const delta = (isUp ? steps : -steps) * 0.05;
+            const newSpot = Math.max(100, Number((spot + delta).toFixed(2)));
             const direction: 'up' | 'down' = newSpot >= spot ? 'up' : 'down';
 
             return {
               ...u,
-              prevSpot: spot,
+              prevSpot: u.prevSpot || spot,
               spot: newSpot,
-              high: Math.max(u.high || spot, newSpot),
-              low: Math.min(u.low || spot, newSpot),
+              high: Math.max(u.high ?? spot, newSpot),
+              low: Math.min(u.low ?? spot, newSpot),
               tickDirection: direction
             };
           } else if (u.kind === 'COMMODITY') {
             const spot = u.spot || 5000;
-            const scale = u.sym === 'GOLD' ? 14 : u.sym === 'SILVER' ? 11 : u.sym === 'CRUDEOIL' ? 3.5 : 1;
-            const rawStep = (Math.random() - 0.496) * scale;
-            let tickSteps = Math.round(rawStep / 0.05);
-            if (tickSteps === 0) {
-              tickSteps = Math.random() > 0.5 ? 1 : -1;
-            }
-            const tickAmount = tickSteps * 0.05;
-            const newSpot = Math.max(1, Number((spot + tickAmount).toFixed(2)));
+            const scale = u.sym === 'GOLD' ? 10 : u.sym === 'SILVER' ? 8 : u.sym === 'CRUDEOIL' ? 3 : 1;
+            const steps = Math.floor(Math.random() * scale) + 1;
+            const isUp = Math.random() > 0.49;
+            const delta = (isUp ? steps : -steps) * 0.05;
+            const newSpot = Math.max(1, Number((spot + delta).toFixed(2)));
             const direction: 'up' | 'down' = newSpot >= spot ? 'up' : 'down';
 
             return {
               ...u,
-              prevSpot: spot,
+              prevSpot: u.prevSpot || spot,
               spot: newSpot,
-              high: Math.max(u.high || spot, newSpot),
-              low: Math.min(u.low || spot, newSpot),
+              high: Math.max(u.high ?? spot, newSpot),
+              low: Math.min(u.low ?? spot, newSpot),
               tickDirection: direction
             };
           } else if (u.kind === 'STOCK') {
             // F&O Stock contracts track underlying stock price with active order-flow
-            const matchingStock = updatedStockMap.get(u.sym);
+            const matchingStock = allUpdatedStocksMap.get(u.sym) || stocksRef.current?.find(s => s.sym === u.sym);
             if (matchingStock) {
               return {
                 ...u,
-                prevSpot: u.spot || matchingStock.ltp,
+                prevSpot: u.prevSpot || matchingStock.prevClose || matchingStock.ltp,
                 spot: matchingStock.ltp,
-                high: Math.max(u.high || matchingStock.ltp, matchingStock.ltp),
-                low: Math.min(u.low || matchingStock.ltp, matchingStock.ltp),
-                tickDirection: matchingStock.tickDirection
+                high: Math.max(u.high ?? matchingStock.ltp, matchingStock.high ?? matchingStock.ltp),
+                low: Math.min(u.low ?? matchingStock.ltp, matchingStock.low ?? matchingStock.ltp),
+                tickDirection: matchingStock.tickDirection || 'same'
               };
             }
             return u;
@@ -447,7 +461,7 @@ export default function App() {
           }
         });
       });
-    }, 2200);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, []);

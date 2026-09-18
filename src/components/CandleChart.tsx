@@ -120,9 +120,11 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     return s.marginT + plotPriceH - ((clamped - s.pMin) / (s.pMax - s.pMin || 1)) * plotPriceH;
   })();
   const overlayColor = currentTickDir === 'down' ? '#E2564F' : '#2FBF71';
+  const currentCandleSymRef = useRef<string>(selectedSym);
 
   // Seed a full history buffer whenever the symbol or timeframe changes
   useEffect(() => {
+    currentCandleSymRef.current = selectedSym;
     const basePrice = getSpot(selectedSym);
     const bucketMs = TIMEFRAME_MS[timeframe];
     const now = Math.floor(Date.now() / bucketMs) * bucketMs;
@@ -158,7 +160,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   // Live tick updates: roll into a new bucket once the timeframe interval elapses,
   // otherwise update the high/low/close/volume of the currently-forming candle.
   useEffect(() => {
-    if (!currentLivePrice || candles.length === 0) return;
+    if (!currentLivePrice || candles.length === 0 || currentCandleSymRef.current !== selectedSym) return;
     const bucketMs = TIMEFRAME_MS[timeframe];
 
     setCandles(prev => {
@@ -187,7 +189,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       };
       return [...prev.slice(0, -1), updatedLast];
     });
-  }, [currentLivePrice, timeframe]);
+  }, [currentLivePrice, timeframe, selectedSym]);
 
   // Zoom with the mouse wheel
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
