@@ -33,6 +33,7 @@ import {
   saveSessionToFirestore,
   loadSessionFromFirestore,
   clearSessionFromFirestore,
+  unregisterEmailInFirestore,
   auth
 } from './firebase';
 
@@ -812,9 +813,13 @@ export default function App() {
 
   // Teacher purges student record completely from Firestore
   const handlePurgeStudent = async (roll: string) => {
+    const profile = allStudentProfiles[roll] || (await loadStudentProfileFromFirestore(roll));
     await purgeStudentPortfolioFromFirestore(roll);
     try {
       await deleteStudentProfileFromFirestore(roll);
+      if (profile?.email) {
+        await unregisterEmailInFirestore(profile.email);
+      }
     } catch (err) {
       console.warn('Could not purge student profile:', err);
     }
@@ -828,7 +833,11 @@ export default function App() {
   // Student self-deletes own account
   const handleDeleteOwnAccount = async () => {
     if (!currentRoll) return;
+    const profile = allStudentProfiles[currentRoll] || (await loadStudentProfileFromFirestore(currentRoll));
     await deleteStudentPortfolioInFirestore(currentRoll);
+    if (profile?.email) {
+      await unregisterEmailInFirestore(profile.email);
+    }
     await handleLogout();
   };
 

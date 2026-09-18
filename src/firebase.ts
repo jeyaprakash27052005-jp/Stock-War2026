@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { 
+  initializeFirestore,
   getFirestore, 
   doc, 
   getDoc, 
@@ -17,7 +18,7 @@ import {
   Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Portfolio, Stock, FnoUnderlying, StudentProfile } from './types';
+import { Portfolio, Stock, FnoUnderlying, StudentProfile, PersonDetails } from './types';
 
 export const STARTING_CASH = 1000000;
 
@@ -40,10 +41,20 @@ export function defaultPortfolio(roll: string, studentName?: string, email?: str
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore with specific database ID if provided
-export const db: Firestore = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+// Initialize Firestore with specific database ID if provided and force long-polling
+// to prevent "Could not reach Cloud Firestore backend. Backend didn't respond within 10 seconds"
+// errors caused by proxies/iframes buffering WebChannel streaming connections.
+const dbId = firebaseConfig.firestoreDatabaseId || undefined;
+export const db: Firestore = (() => {
+  try {
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+      experimentalAutoDetectLongPolling: false
+    }, dbId);
+  } catch {
+    return dbId ? getFirestore(app, dbId) : getFirestore(app);
+  }
+})();
 
 // Initialize Auth
 export const auth = getAuth(app);
@@ -497,9 +508,177 @@ export async function findStudentProfileByGoogleUid(uid: string): Promise<Studen
 }
 
 export async function findStudentProfileByEmail(email: string): Promise<StudentProfile | null> {
-  const q = query(collection(db, 'student_profiles'), where('email', '==', email.toLowerCase()));
+  const normalized = email.trim().toLowerCase();
+  const q = query(collection(db, 'student_profiles'), where('email', '==', normalized));
   const snap = await getDocs(q);
-  if (snap.empty) return null;
-  return snap.docs[0].data() as StudentProfile;
+  if (!snap.empty) {
+    return snap.docs[0].data() as StudentProfile;
+  }
+  // Case-insensitive fallback check across docs
+  const allProfiles = await getDocs(collection(db, 'student_profiles'));
+  for (const d of allProfiles.docs) {
+    const data = d.data() as StudentProfile;
+    if (data.email && data.email.trim().toLowerCase() === normalized) {
+      return data;
+    }
+  }
+  return null;
+}
+
+// =================== STRICT 1 EMAIL = 1 REGISTRATION ENFORCEMENT ===================
+
+export interface EmailRegistrationRecord {
+  email: string;
+  roll: string;
+  studentName?: string;
+  registeredAt: number;
+}
+
+// Checks if an email is already registered anywhere in the system.
+export async function checkEmailRegistrationStatus(email: string): Promise<{
+  registered: boolean;
+  roll?: string;
+  studentName?: string;
+  profile?: StudentProfile;
+}> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return { registered: false };
+
+  try {
+    // 1. Check dedicated registered_emails lookup collection
+    const regDocRef = doc(db, 'registered_emails', encodeURIComponent(normalized));
+    const regSnap = await getDoc(regDocRef);
+    if (regSnap.exists()) {
+      const data = regSnap.data() as EmailRegistrationRecord;
+      let profile: StudentProfile | null = null;
+      if (data.roll) {
+        profile = await loadStudentProfileFromFirestore(data.roll);
+      }
+      return {
+        registered: true,
+        roll: data.roll,
+        studentName: data.studentName || profile?.primary?.name,
+        profile: profile || undefined
+      };
+    }
+
+    // 2. Fallback check across student_profiles collection
+    const profile = await findStudentProfileByEmail(normalized);
+    if (profile) {
+      // Sync into registered_emails collection for fast future lookups
+      await setDoc(regDocRef, {
+        email: normalized,
+        roll: profile.roll,
+        studentName: profile.primary?.name || profile.roll,
+        registeredAt: profile.createdAt || Date.now()
+      });
+      return {
+        registered: true,
+        roll: profile.roll,
+        studentName: profile.primary?.name,
+        profile
+      };
+    }
+
+    // 3. Fallback check across portfolios collection
+    const portSnap = await getDocs(query(collection(db, 'portfolios'), where('email', '==', normalized)));
+    if (!portSnap.empty) {
+      const portData = portSnap.docs[0].data() as Portfolio;
+      await setDoc(regDocRef, {
+        email: normalized,
+        roll: portData.roll,
+        studentName: portData.studentName || portData.roll,
+        registeredAt: Date.now()
+      });
+      return {
+        registered: true,
+        roll: portData.roll,
+        studentName: portData.studentName
+      };
+    }
+
+    return { registered: false };
+  } catch (err) {
+    console.warn('Error checking email registration status:', err);
+    // Secondary fallback
+    const fallbackProfile = await findStudentProfileByEmail(normalized);
+    if (fallbackProfile) {
+      return {
+        registered: true,
+        roll: fallbackProfile.roll,
+        studentName: fallbackProfile.primary?.name,
+        profile: fallbackProfile
+      };
+    }
+    return { registered: false };
+  }
+}
+
+// Atomically registers a student and reserves their email (enforces one email = one account only)
+export async function registerStudentWithKyc(
+  studentId: string,
+  email: string,
+  primary: PersonDetails,
+  nominees: Partial<PersonDetails>[],
+  googleUid?: string
+): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedId = studentId.trim().toUpperCase();
+
+  // 1. Strict duplicate check before writing
+  const check = await checkEmailRegistrationStatus(normalizedEmail);
+  if (check.registered && check.roll && check.roll !== normalizedId) {
+    throw new Error(
+      `This email address (${normalizedEmail}) is already registered under Student ID ${check.roll}. Each email can only be registered one time.`
+    );
+  }
+
+  // 2. Reserve email in registered_emails collection
+  const regDocRef = doc(db, 'registered_emails', encodeURIComponent(normalizedEmail));
+  await setDoc(regDocRef, {
+    email: normalizedEmail,
+    roll: normalizedId,
+    studentName: primary.name,
+    registeredAt: Date.now()
+  });
+
+  // 3. Save student profile
+  await saveStudentProfileToFirestore(normalizedId, {
+    roll: normalizedId,
+    primary,
+    nominees,
+    completed: true,
+    googleUid: googleUid || '',
+    email: normalizedEmail,
+    verified: true,
+    verifiedAt: Date.now()
+  });
+
+  // 4. Initialize portfolio with starting capital
+  const portDocRef = doc(db, 'portfolios', normalizedId);
+  const existingPort = await getDoc(portDocRef);
+  if (!existingPort.exists()) {
+    const initialPort = defaultPortfolio(normalizedId, primary.name, normalizedEmail);
+    await setDoc(portDocRef, initialPort);
+  } else {
+    await updateDoc(portDocRef, {
+      studentName: primary.name,
+      email: normalizedEmail,
+      isDeleted: false,
+      lastActive: Date.now()
+    });
+  }
+}
+
+// Unregisters an email so it could potentially be re-registered (e.g. if instructor purged the student)
+export async function unregisterEmailInFirestore(email: string): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return;
+  try {
+    const regDocRef = doc(db, 'registered_emails', encodeURIComponent(normalized));
+    await deleteDoc(regDocRef);
+  } catch (err) {
+    console.warn('Error unregistering email:', err);
+  }
 }
 
