@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition, StudentProfile, PersonDetails } from './types';
+import { Stock, FnoUnderlying, Portfolio, Holding, FnoPosition, StudentProfile, PersonDetails, TeacherTabKey } from './types';
 import { INITIAL_STOCKS, FNO_UNDERLYINGS_BASE, inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, DEFAULT_EXPIRY_MS, RISK_FREE } from './marketData';
 import { 
   loadPortfolioFromFirestore, 
@@ -82,6 +82,7 @@ export default function App() {
 
   // Navigation Tab State
   const [activeTab, setActiveTab] = useState<'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile'>('market');
+  const [teacherActiveTab, setTeacherActiveTab] = useState<TeacherTabKey>('students');
 
   // Guards the one-time catalog seed so it only runs once per app load, not on every snapshot
   const catalogSeededRef = useRef(false);
@@ -1027,11 +1028,17 @@ export default function App() {
             email={userEmail}
             cash={userRole === 'student' ? portfolio.cash : undefined}
             isFrozen={userRole === 'student' ? portfolio.isFrozen : false}
-            activeTab={userRole === 'student' ? activeTab : undefined}
+            activeTab={userRole === 'student' ? activeTab : userRole === 'teacher' ? teacherActiveTab : undefined}
             onLogout={handleLogout}
             onDeleteAccount={userRole === 'student' ? handleDeleteOwnAccount : undefined}
             onEditProfile={userRole === 'student' ? () => setActiveTab('profile') : undefined}
-            onNavigateTab={userRole === 'student' ? (tab) => setActiveTab(tab) : undefined}
+            onNavigateTab={
+              userRole === 'student'
+                ? (tab) => setActiveTab(tab as 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile')
+                : userRole === 'teacher'
+                ? (tab) => setTeacherActiveTab(tab as TeacherTabKey)
+                : undefined
+            }
           />
 
           {userRole === 'student' && showProfileModal && (
@@ -1150,6 +1157,8 @@ export default function App() {
               </div>
             ) : (
               <TeacherDashboard
+                activeTab={teacherActiveTab}
+                setActiveTab={setTeacherActiveTab}
                 students={allStudents}
                 studentProfiles={allStudentProfiles}
                 allStocks={stocks}

@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, CalendarClock, Printer, IdCard, Mail, ShieldCheck, ShieldAlert } from 'lucide-react';
-import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition, StudentProfile } from '../types';
+import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, Printer, Mail, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition, StudentProfile, TeacherTabKey } from '../types';
 import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, sortExpiries, RISK_FREE } from '../marketData';
 
 interface TeacherDashboardProps {
+  activeTab: TeacherTabKey;
+  setActiveTab: (tab: TeacherTabKey) => void;
   students: Portfolio[];
   studentProfiles: Record<string, StudentProfile>;
   allStocks: Stock[];
@@ -31,6 +33,8 @@ interface ActionModalConfig {
 }
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
+  activeTab,
+  setActiveTab,
   students,
   studentProfiles,
   allStocks,
@@ -46,9 +50,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onUpdateUnderlyingExpiry,
   onRemoveUnderlyingExpiry
 }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'companies' | 'expiry' | 'registrations'>('students');
   const [registrationSearch, setRegistrationSearch] = useState<string>('');
   const [selectedStudentRoll, setSelectedStudentRoll] = useState<string | null>(null);
+
+  // Reset the student drill-down whenever the section changes (e.g. via the
+  // Navbar's drawer menu) - mirrors the old behavior when tabs lived in-page.
+  React.useEffect(() => {
+    setSelectedStudentRoll(null);
+  }, [activeTab]);
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [studentStatusFilter, setStudentStatusFilter] = useState<'ALL' | 'ACTIVE' | 'FROZEN' | 'DELETED'>('ALL');
   const [companySearch, setCompanySearch] = useState<string>('');
@@ -614,58 +623,6 @@ ${bodyHtml}
           </button>
         </div>
       )}
-
-      {/* Top switch tabs */}
-      <div className="flex items-center justify-between border-b border-[#1F2A33] pb-4 flex-wrap gap-4">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => { setActiveTab('students'); setSelectedStudentRoll(null); }}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border ${
-              activeTab === 'students'
-                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
-                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
-            }`}
-          >
-            Class &amp; Student Portfolios ({students.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveTab('companies'); setSelectedStudentRoll(null); }}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border ${
-              activeTab === 'companies'
-                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
-                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
-            }`}
-          >
-            All Listed Companies &amp; Update Options ({allStocks.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveTab('expiry'); setSelectedStudentRoll(null); }}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border flex items-center gap-1.5 ${
-              activeTab === 'expiry'
-                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
-                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
-            }`}
-          >
-            <CalendarClock className="w-3.5 h-3.5" />
-            F&amp;O Expiry Management ({underlyings.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveTab('registrations'); setSelectedStudentRoll(null); }}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition cursor-pointer border flex items-center gap-1.5 ${
-              activeTab === 'registrations'
-                ? 'bg-[#D4A93F] text-[#0A0E14] border-[#D4A93F]'
-                : 'bg-transparent text-[#6B7680] border-[#1F2A33] hover:text-[#F1F4F6]'
-            }`}
-          >
-            <IdCard className="w-3.5 h-3.5" />
-            Registered Users ({Object.keys(studentProfiles).length})
-          </button>
-        </div>
-      </div>
 
       {/* ===================== TAB: STUDENTS ===================== */}
       {activeTab === 'students' && (

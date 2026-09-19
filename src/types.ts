@@ -138,3 +138,10 @@ export interface StudentProfile {
   verifiedAt?: number;
 }
 
+// ==================== NAVIGATION ====================
+// Shared tab-key type so the Navbar's drawer menu, App.tsx's routing state, and
+// TeacherDashboard's own tab state all agree on the same set of destinations.
+export type StudentTabKey = 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile';
+export type TeacherTabKey = 'students' | 'companies' | 'expiry' | 'registrations';
+export type AppTabKey = StudentTabKey | TeacherTabKey;
+

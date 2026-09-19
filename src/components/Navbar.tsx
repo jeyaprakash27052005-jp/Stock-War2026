@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { inr } from '../marketData';
-import { MoreVertical, X, User, BarChart2, Briefcase, Zap, History, LogOut, ChevronRight, TrendingUp, ShieldCheck } from 'lucide-react';
+import { AppTabKey } from '../types';
+import { MoreVertical, X, User, Users, BarChart2, Briefcase, Zap, History, LogOut, ChevronRight, TrendingUp, ShieldCheck, Building2, CalendarClock, IdCard } from 'lucide-react';
 
 interface NavbarProps {
   userRole: 'student' | 'teacher';
@@ -10,11 +11,11 @@ interface NavbarProps {
   email?: string;
   cash?: number;
   isFrozen?: boolean;
-  activeTab?: 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile';
+  activeTab?: AppTabKey;
   onLogout: () => void;
   onDeleteAccount?: () => void;
   onEditProfile?: () => void;
-  onNavigateTab?: (tab: 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile') => void;
+  onNavigateTab?: (tab: AppTabKey) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -40,7 +41,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  const handleTabClick = (tab: 'market' | 'portfolio' | 'fno' | 'chart' | 'orders' | 'profile') => {
+  const handleTabClick = (tab: AppTabKey) => {
     setMenuOpen(false);
     if (tab === 'profile' && onEditProfile) {
       onEditProfile();
@@ -54,7 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <header className="flex items-center justify-between px-6 py-3.5 border-b border-[#1F2A33] bg-[#10161D] flex-wrap gap-3">
         {/* Left Side Section: 3-Dot Navigation Menu Option, Brand, Profile & Details */}
         <div className="flex items-center gap-3">
-          {userRole === 'student' && (
+          {(userRole === 'student' || userRole === 'teacher') && onNavigateTab && (
             <button
               type="button"
               id="left3DotMenuBtn"
@@ -172,65 +173,81 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* User Profile Card inside Drawer */}
             <div className="p-4 bg-[#141B23] border-b border-[#1F2A33]">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] uppercase tracking-wider text-[#6B7680]">Student Trader ID</span>
-                <span className="text-[10px] uppercase font-bold text-[#2FBF71] bg-[#2FBF71]/15 px-1.5 py-0.5 border border-[#2FBF71]/30 flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3" /> Active
-                </span>
-              </div>
-              <div className="text-base font-bold text-[#D4A93F] mb-1">{roll}</div>
-              {teamName && (
-                <div className="text-xs text-[#F1F4F6] font-semibold mb-1">
-                  Team: <span className="text-[#D4A93F]">{teamName}</span>
+              {userRole === 'teacher' ? (
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-[#D4A93F]" />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#6B7680]">Signed in as</div>
+                    <div className="text-base font-bold text-[#D4A93F]">Instructor</div>
+                  </div>
                 </div>
-              )}
-              {studentName && studentName !== roll && (
-                <div className="text-xs text-[#8E9CA8] mb-2">{studentName}</div>
-              )}
-              {typeof cash === 'number' && (
-                <div className="mt-2 pt-2 border-t border-[#1F2A33] flex justify-between text-xs">
-                  <span className="text-[#6B7680]">Cash Balance:</span>
-                  <span className="text-emerald-400 font-bold">{inr(cash)}</span>
-                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase tracking-wider text-[#6B7680]">Student Trader ID</span>
+                    <span className="text-[10px] uppercase font-bold text-[#2FBF71] bg-[#2FBF71]/15 px-1.5 py-0.5 border border-[#2FBF71]/30 flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" /> Active
+                    </span>
+                  </div>
+                  <div className="text-base font-bold text-[#D4A93F] mb-1">{roll}</div>
+                  {teamName && (
+                    <div className="text-xs text-[#F1F4F6] font-semibold mb-1">
+                      Team: <span className="text-[#D4A93F]">{teamName}</span>
+                    </div>
+                  )}
+                  {studentName && studentName !== roll && (
+                    <div className="text-xs text-[#8E9CA8] mb-2">{studentName}</div>
+                  )}
+                  {typeof cash === 'number' && (
+                    <div className="mt-2 pt-2 border-t border-[#1F2A33] flex justify-between text-xs">
+                      <span className="text-[#6B7680]">Cash Balance:</span>
+                      <span className="text-emerald-400 font-bold">{inr(cash)}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {/* Menu Options List */}
             <div className="flex-1 overflow-y-auto py-2">
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
-                Account &amp; Security
-              </div>
-
-              {/* Primary My Profile Option */}
-              <button
-                type="button"
-                id="drawerMyProfileOption"
-                onClick={handleProfileClick}
-                className={`w-full text-left px-4 py-3 text-xs flex items-center justify-between transition border-l-2 cursor-pointer ${
-                  activeTab === 'profile'
-                    ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
-                    : 'text-[#F1F4F6] hover:bg-[#1A232E] hover:text-[#D4A93F] border-transparent'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <User className="w-4 h-4 text-[#D4A93F]" />
-                  <div>
-                    <div className="font-bold uppercase tracking-wider">My Profile</div>
-                    <div className="text-[10px] text-[#6B7680]">Details &amp; Password Changes</div>
+              {userRole === 'student' && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
+                    Account &amp; Security
                   </div>
-                </div>
-                {activeTab === 'profile' ? (
-                  <span className="text-[10px] bg-[#D4A93F]/20 text-[#D4A93F] px-1.5 py-0.5 border border-[#D4A93F]/40 font-bold">ACTIVE</span>
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-[#6B7680]" />
-                )}
-              </button>
 
-              <div className="px-3 pt-3 pb-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
-                Trading Terminal
-              </div>
+                  {/* Primary My Profile Option */}
+                  <button
+                    type="button"
+                    id="drawerMyProfileOption"
+                    onClick={handleProfileClick}
+                    className={`w-full text-left px-4 py-3 text-xs flex items-center justify-between transition border-l-2 cursor-pointer ${
+                      activeTab === 'profile'
+                        ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
+                        : 'text-[#F1F4F6] hover:bg-[#1A232E] hover:text-[#D4A93F] border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <User className="w-4 h-4 text-[#D4A93F]" />
+                      <div>
+                        <div className="font-bold uppercase tracking-wider">My Profile</div>
+                        <div className="text-[10px] text-[#6B7680]">Details &amp; Password Changes</div>
+                      </div>
+                    </div>
+                    {activeTab === 'profile' ? (
+                      <span className="text-[10px] bg-[#D4A93F]/20 text-[#D4A93F] px-1.5 py-0.5 border border-[#D4A93F]/40 font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-[#6B7680]" />
+                    )}
+                  </button>
 
-              {onNavigateTab && (
+                  <div className="px-3 pt-3 pb-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
+                    Trading Terminal
+                  </div>
+                </>
+              )}
+
+              {userRole === 'student' && onNavigateTab && (
                 <>
                   <button
                     type="button"
@@ -327,6 +344,94 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
                     {activeTab === 'orders' ? (
                       <span className="text-[10px] text-[#D4A93F] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
+                  </button>
+                </>
+              )}
+
+              {userRole === 'teacher' && onNavigateTab && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#6B7680]">
+                    Teacher Console
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTabClick('students')}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'students'
+                        ? 'bg-[#18222C] text-[#5B9DD9] border-[#5B9DD9] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Users className="w-4 h-4 text-[#5B9DD9]" />
+                      <span>Class &amp; Student Portfolios</span>
+                    </div>
+                    {activeTab === 'students' ? (
+                      <span className="text-[10px] text-[#5B9DD9] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTabClick('companies')}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'companies'
+                        ? 'bg-[#18222C] text-[#00E676] border-[#00E676] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Building2 className="w-4 h-4 text-[#00E676]" />
+                      <span>All Listed Companies</span>
+                    </div>
+                    {activeTab === 'companies' ? (
+                      <span className="text-[10px] text-[#00E676] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTabClick('expiry')}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'expiry'
+                        ? 'bg-[#18222C] text-[#D4A93F] border-[#D4A93F] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <CalendarClock className="w-4 h-4 text-[#D4A93F]" />
+                      <span>F&amp;O Expiry Management</span>
+                    </div>
+                    {activeTab === 'expiry' ? (
+                      <span className="text-[10px] text-[#D4A93F] font-bold">ACTIVE</span>
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTabClick('registrations')}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between transition cursor-pointer border-l-2 ${
+                      activeTab === 'registrations'
+                        ? 'bg-[#18222C] text-[#9B6BD6] border-[#9B6BD6] font-bold'
+                        : 'text-[#8E9CA8] hover:bg-[#1A232E] hover:text-[#F1F4F6] border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <IdCard className="w-4 h-4 text-[#9B6BD6]" />
+                      <span>Registered Users</span>
+                    </div>
+                    {activeTab === 'registrations' ? (
+                      <span className="text-[10px] text-[#9B6BD6] font-bold">ACTIVE</span>
                     ) : (
                       <ChevronRight className="w-3.5 h-3.5 text-[#3A4550]" />
                     )}
