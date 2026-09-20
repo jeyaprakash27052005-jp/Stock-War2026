@@ -50,6 +50,86 @@ const MIN_VISIBLE = 20;
 const MAX_VISIBLE = 160;
 const DEFAULT_VISIBLE = 65;
 
+// ---- Technical indicator calculations (operate over the FULL candle history so
+// values are accurate even at the left edge of whatever window is currently visible) ----
+
+function computeEMASeries(closes: number[], period: number): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  const k = 2 / (period + 1);
+  let ema: number | null = null;
+  for (let i = 0; i < closes.length; i++) {
+    if (i + 1 < period) continue;
+    if (ema === null) {
+      // Seed with a simple average of the first `period` closes
+      let sum = 0;
+      for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+      ema = sum / period;
+    } else {
+      ema = closes[i] * k + ema * (1 - k);
+    }
+    out[i] = ema;
+  }
+  return out;
+}
+
+function computeRSISeries(closes: number[], period = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return out;
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) avgGain += diff; else avgLoss -= diff;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+
+function computeMACD(closes: number[]): { macd: (number | null)[]; signal: (number | null)[]; hist: (number | null)[] } {
+  const ema12 = computeEMASeries(closes, 12);
+  const ema26 = computeEMASeries(closes, 26);
+  const macd: (number | null)[] = closes.map((_, i) =>
+    ema12[i] !== null && ema26[i] !== null ? (ema12[i] as number) - (ema26[i] as number) : null
+  );
+  // Signal = 9-period EMA of the MACD line (over the non-null tail)
+  const macdValues = macd.map(v => v ?? 0);
+  const firstValidIdx = macd.findIndex(v => v !== null);
+  const signalRaw = computeEMASeries(macdValues, 9);
+  const signal: (number | null)[] = signalRaw.map((v, i) => (firstValidIdx >= 0 && i >= firstValidIdx + 8 ? v : null));
+  const hist: (number | null)[] = macd.map((v, i) => (v !== null && signal[i] !== null ? v - (signal[i] as number) : null));
+  return { macd, signal, hist };
+}
+
+function computeBollinger(closes: number[], period = 20, mult = 2): { mid: (number | null)[]; upper: (number | null)[]; lower: (number | null)[] } {
+  const mid: (number | null)[] = new Array(closes.length).fill(null);
+  const upper: (number | null)[] = new Array(closes.length).fill(null);
+  const lower: (number | null)[] = new Array(closes.length).fill(null);
+  for (let i = 0; i < closes.length; i++) {
+    if (i + 1 < period) continue;
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+    const avg = sum / period;
+    let variance = 0;
+    for (let j = i - period + 1; j <= i; j++) variance += (closes[j] - avg) ** 2;
+    const stdDev = Math.sqrt(variance / period);
+    mid[i] = avg;
+    upper[i] = avg + mult * stdDev;
+    lower[i] = avg - mult * stdDev;
+  }
+  return { mid, upper, lower };
+}
+
 export const CandleChart: React.FC<CandleChartProps> = ({
   stocks,
   indices,
@@ -69,7 +149,10 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   const [showEMA, setShowEMA] = useState<boolean>(false);
   const [showVWAP, setShowVWAP] = useState<boolean>(false);
   const [showBollinger, setShowBollinger] = useState<boolean>(false);
+  const [showRSI, setShowRSI] = useState<boolean>(false);
+  const [showMACD, setShowMACD] = useState<boolean>(false);
   const [showVolume, setShowVolume] = useState<boolean>(true);
+  const [showTradeMarkers, setShowTradeMarkers] = useState<boolean>(true);
 
   // Tools
   const [toolMode, setToolMode] = useState<'crosshair' | 'none' | 'horizRay'>('crosshair');
@@ -317,7 +400,14 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     if (!ctx) return;
 
     const width = containerRef.current?.clientWidth || 900;
-    const height = 520;
+    const mainHeight = 520;
+    const subPanelH = 110;
+    const subPanelGap = 4;
+    const rsiOn = showRSI;
+    const macdOn = showMACD;
+    const height = mainHeight
+      + (rsiOn ? subPanelH + subPanelGap : 0)
+      + (macdOn ? subPanelH + subPanelGap : 0);
     canvas.width = width;
     canvas.height = height;
 
@@ -342,7 +432,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     const marginT = 32;
     const marginB = 30; // bottom time axis
     const plotW = width - marginL - marginR;
-    const plotH = height - marginT - marginB;
+    const plotH = mainHeight - marginT - marginB;
 
     const n = visible.length;
     const slot = plotW / n;
@@ -388,7 +478,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       ctx.beginPath();
       ctx.strokeStyle = '#141414';
       ctx.moveTo(x, marginT);
-      ctx.lineTo(x, height - marginB);
+      ctx.lineTo(x, mainHeight - marginB);
       ctx.stroke();
 
       // Label format: "Sep/18 9:39" or "10:36" matching 1.png
@@ -397,7 +487,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
       const label = i === 0 ? `${monthStr}/${dayStr} ${timeStr}` : timeStr;
 
-      ctx.fillText(label, x, height - 10);
+      ctx.fillText(label, x, mainHeight - 10);
     }
 
     // --- Volume Bars (if enabled) ---
@@ -442,6 +532,53 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
       if (showSMA9) drawSMA(9, '#29B6F6'); // light blue
       if (showSMA20) drawSMA(20, '#FFCA28'); // amber yellow
+
+      if (showEMA) {
+        const emaSeries = computeEMASeries(allCandleCloses, 21);
+        ctx.strokeStyle = '#EC407A';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let started = false;
+        visible.forEach((_, i) => {
+          const globalIdx = start + i;
+          const val = emaSeries[globalIdx];
+          if (val === null || val === undefined) return;
+          const x = xOf(i);
+          const y = yOf(val);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else { ctx.lineTo(x, y); }
+        });
+        if (started) ctx.stroke();
+      }
+    }
+
+    // --- VWAP (volume-weighted average price, cumulative across the loaded history) ---
+    if (showVWAP) {
+      let cumPV = 0;
+      let cumVol = 0;
+      const vwapSeries: number[] = candles.map(c => {
+        const typicalPrice = (c.h + c.l + c.c) / 3;
+        cumPV += typicalPrice * c.v;
+        cumVol += c.v;
+        return cumVol > 0 ? cumPV / cumVol : typicalPrice;
+      });
+
+      ctx.strokeStyle = '#AB47BC';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      let started = false;
+      visible.forEach((_, i) => {
+        const globalIdx = start + i;
+        const val = vwapSeries[globalIdx];
+        if (val === undefined) return;
+        const x = xOf(i);
+        const y = yOf(val);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else { ctx.lineTo(x, y); }
+      });
+      if (started) ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // --- Candlesticks / Bars / Line ---
@@ -562,13 +699,13 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
 
-      // Vertical line
+      // Vertical line extends through the whole canvas (main panel + any sub-panels)
       ctx.beginPath();
       ctx.moveTo(crosshair.x, marginT);
-      ctx.lineTo(crosshair.x, height - marginB);
+      ctx.lineTo(crosshair.x, height);
       ctx.stroke();
 
-      // Horizontal line
+      // Horizontal line (scoped to the main price panel only)
       ctx.beginPath();
       ctx.moveTo(marginL, crosshair.y);
       ctx.lineTo(width - marginR, crosshair.y);
@@ -576,7 +713,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       ctx.restore();
 
       // Crosshair right price badge
-      if (crosshair.price && crosshair.y >= marginT && crosshair.y <= height - marginB) {
+      if (crosshair.price && crosshair.y >= marginT && crosshair.y <= mainHeight - marginB) {
         ctx.fillStyle = '#212121';
         ctx.fillRect(width - marginR + 4, crosshair.y - 8, 70, 16);
         ctx.strokeStyle = '#757575';
@@ -587,7 +724,238 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         ctx.fillText(crosshair.price.toFixed(2), width - marginR + 39, crosshair.y + 4);
       }
     }
-  }, [candles, currentLivePrice, selectedSym, visibleCount, viewOffset, crosshair, showSMA9, showSMA20, showEMA, showVWAP, showVolume, chartType, prevClose, timeframe, toolMode]);
+
+    // --- Bollinger Bands (overlay on the main price panel, same units as price) ---
+    if (showBollinger) {
+      const allCloses = candles.map(c => c.c);
+      const { mid, upper, lower } = computeBollinger(allCloses, 20, 2);
+
+      const drawBandLine = (series: (number | null)[], color: string, dashed: boolean) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        if (dashed) ctx.setLineDash([3, 2]); else ctx.setLineDash([]);
+        ctx.beginPath();
+        let started = false;
+        visible.forEach((_, i) => {
+          const globalIdx = start + i;
+          const val = series[globalIdx];
+          if (val === null || val === undefined) return;
+          const x = xOf(i);
+          const y = yOf(val);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else { ctx.lineTo(x, y); }
+        });
+        if (started) ctx.stroke();
+        ctx.setLineDash([]);
+      };
+
+      drawBandLine(upper, 'rgba(41, 182, 246, 0.7)', true);
+      drawBandLine(mid, 'rgba(255, 202, 40, 0.6)', false);
+      drawBandLine(lower, 'rgba(41, 182, 246, 0.7)', true);
+    }
+
+    // --- Buy/Sell trade markers for the currently selected symbol (equity + F&O) ---
+    if (showTradeMarkers) {
+      const relevantEquity = equityTransactions.filter(t => t.sym === selectedSym);
+      const relevantFno = fnoTransactions.filter(t => t.underlying === selectedSym);
+
+      const findNearestVisibleIndex = (time: number): number | null => {
+        // Find the visible candle whose time bucket contains this trade
+        for (let i = 0; i < visible.length; i++) {
+          const bucketStart = visible[i].t;
+          const bucketEnd = bucketStart + TIMEFRAME_MS[timeframe];
+          if (time >= bucketStart && time < bucketEnd) return i;
+        }
+        // Fall back to nearest by absolute distance if not exactly in range
+        if (visible.length === 0) return null;
+        let nearest = 0;
+        let bestDiff = Math.abs(visible[0].t - time);
+        for (let i = 1; i < visible.length; i++) {
+          const diff = Math.abs(visible[i].t - time);
+          if (diff < bestDiff) { bestDiff = diff; nearest = i; }
+        }
+        return nearest;
+      };
+
+      relevantEquity.forEach(t => {
+        const idx = findNearestVisibleIndex(t.time);
+        if (idx === null) return;
+        const x = xOf(idx);
+        const y = yOf(t.price);
+        const isBuy = t.side === 'buy';
+        ctx.fillStyle = isBuy ? '#00E676' : '#FF1744';
+        ctx.beginPath();
+        if (isBuy) {
+          // Upward triangle below the price point
+          ctx.moveTo(x, y + 14);
+          ctx.lineTo(x - 5, y + 22);
+          ctx.lineTo(x + 5, y + 22);
+        } else {
+          // Downward triangle above the price point
+          ctx.moveTo(x, y - 14);
+          ctx.lineTo(x - 5, y - 22);
+          ctx.lineTo(x + 5, y - 22);
+        }
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      relevantFno.forEach(t => {
+        const idx = findNearestVisibleIndex(t.time);
+        if (idx === null) return;
+        const x = xOf(idx);
+        const y = yOf(currentLivePrice); // F&O trades are priced on the derivative, not the underlying's candle scale - anchor near the live line
+        const isBuy = t.side === 'buy';
+        ctx.save();
+        ctx.translate(x, isBuy ? y + 30 : y - 30);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = isBuy ? '#00E676' : '#FF1744';
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.restore();
+
+        const label = t.kind === 'FUT' ? `${t.underlying} FUT` : `${t.strike}${t.optType}`;
+        ctx.fillStyle = '#E0E0E0';
+        ctx.font = '9px "Consolas", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, isBuy ? y + 48 : y - 38);
+      });
+    }
+
+    // --- RSI Sub-panel ---
+    if (rsiOn) {
+      const panelTop = mainHeight + subPanelGap;
+      const panelBottom = panelTop + subPanelH;
+      const rsiMarginT = 14;
+      const rsiPlotH = subPanelH - rsiMarginT - 8;
+
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, panelTop, width, subPanelH);
+      ctx.strokeStyle = '#222';
+      ctx.beginPath();
+      ctx.moveTo(0, panelTop);
+      ctx.lineTo(width, panelTop);
+      ctx.stroke();
+
+      ctx.fillStyle = '#9E9E9E';
+      ctx.font = '10px "Consolas", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('RSI (14)', marginL, panelTop + 11);
+
+      const rsiY = (val: number) => panelTop + rsiMarginT + rsiPlotH - (val / 100) * rsiPlotH;
+
+      // 30 / 70 reference lines
+      [30, 50, 70].forEach(level => {
+        const y = rsiY(level);
+        ctx.strokeStyle = level === 50 ? '#222' : 'rgba(255,202,40,0.25)';
+        ctx.setLineDash(level === 50 ? [] : [2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(marginL, y);
+        ctx.lineTo(width - marginR, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#757575';
+        ctx.textAlign = 'left';
+        ctx.fillText(String(level), width - marginR + 6, y + 3);
+      });
+
+      const rsiSeries = computeRSISeries(candles.map(c => c.c), 14);
+      ctx.strokeStyle = '#BA68C8';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      let started = false;
+      let lastRsiVal: number | null = null;
+      visible.forEach((_, i) => {
+        const globalIdx = start + i;
+        const val = rsiSeries[globalIdx];
+        if (val === null || val === undefined) return;
+        lastRsiVal = val;
+        const x = xOf(i);
+        const y = rsiY(val);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else { ctx.lineTo(x, y); }
+      });
+      if (started) ctx.stroke();
+
+      if (lastRsiVal !== null) {
+        ctx.fillStyle = '#BA68C8';
+        ctx.font = 'bold 10px "Consolas", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${(lastRsiVal as number).toFixed(1)}`, marginL + 60, panelTop + 11);
+      }
+    }
+
+    // --- MACD Sub-panel ---
+    if (macdOn) {
+      const panelTop = mainHeight + subPanelGap + (rsiOn ? subPanelH + subPanelGap : 0);
+      const macdMarginT = 14;
+      const macdPlotH = subPanelH - macdMarginT - 8;
+
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, panelTop, width, subPanelH);
+      ctx.strokeStyle = '#222';
+      ctx.beginPath();
+      ctx.moveTo(0, panelTop);
+      ctx.lineTo(width, panelTop);
+      ctx.stroke();
+
+      ctx.fillStyle = '#9E9E9E';
+      ctx.font = '10px "Consolas", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('MACD (12, 26, 9)', marginL, panelTop + 11);
+
+      const allCloses = candles.map(c => c.c);
+      const { macd, signal, hist } = computeMACD(allCloses);
+
+      const visibleVals: number[] = [];
+      visible.forEach((_, i) => {
+        const g = start + i;
+        if (macd[g] !== null) visibleVals.push(macd[g] as number);
+        if (signal[g] !== null) visibleVals.push(signal[g] as number);
+        if (hist[g] !== null) visibleVals.push(hist[g] as number);
+      });
+      const maxAbs = Math.max(...visibleVals.map(v => Math.abs(v)), 0.01);
+      const macdY = (val: number) => panelTop + macdMarginT + macdPlotH / 2 - (val / maxAbs) * (macdPlotH / 2);
+
+      // Zero line
+      ctx.strokeStyle = '#222';
+      ctx.beginPath();
+      ctx.moveTo(marginL, macdY(0));
+      ctx.lineTo(width - marginR, macdY(0));
+      ctx.stroke();
+
+      // Histogram
+      visible.forEach((_, i) => {
+        const g = start + i;
+        const h = hist[g];
+        if (h === null || h === undefined) return;
+        const x = xOf(i);
+        const y0 = macdY(0);
+        const y1 = macdY(h);
+        ctx.fillStyle = h >= 0 ? 'rgba(0, 230, 118, 0.55)' : 'rgba(255, 23, 68, 0.55)';
+        ctx.fillRect(x - bodyW / 2.5, Math.min(y0, y1), bodyW / 1.25, Math.max(1, Math.abs(y1 - y0)));
+      });
+
+      // MACD & Signal lines
+      const drawMacdLine = (series: (number | null)[], color: string) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        let started = false;
+        visible.forEach((_, i) => {
+          const g = start + i;
+          const val = series[g];
+          if (val === null || val === undefined) return;
+          const x = xOf(i);
+          const y = macdY(val);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else { ctx.lineTo(x, y); }
+        });
+        if (started) ctx.stroke();
+      };
+      drawMacdLine(macd, '#29B6F6');
+      drawMacdLine(signal, '#FF7043');
+    }
+  }, [candles, currentLivePrice, selectedSym, visibleCount, viewOffset, crosshair, showSMA9, showSMA20, showEMA, showVWAP, showVolume, showBollinger, showRSI, showMACD, showTradeMarkers, equityTransactions, fnoTransactions, chartType, prevClose, timeframe, toolMode]);
 
   // Active or hovered candle for OHLC legend
   const displayedCandle = (() => {
@@ -779,12 +1147,74 @@ export const CandleChart: React.FC<CandleChartProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setShowEMA(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>Exponential MA (21)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#EC407A]">
+                      {showEMA ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowVWAP(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>VWAP</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#AB47BC]">
+                      {showVWAP ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowBollinger(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>Bollinger Bands (20, 2)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#29B6F6]">
+                      {showBollinger ? '✓' : ''}
+                    </span>
+                  </button>
+                  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[#757575] font-bold border-t border-[#222] mt-1">Sub-Panels</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowRSI(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>RSI (14)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#BA68C8]">
+                      {showRSI ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowMACD(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>MACD (12, 26, 9)</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#29B6F6]">
+                      {showMACD ? '✓' : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowVolume(v => !v)}
                     className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
                   >
                     <span>Volume Sub-Panel</span>
                     <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#00E676]">
                       {showVolume ? '✓' : ''}
+                    </span>
+                  </button>
+                  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[#757575] font-bold border-t border-[#222] mt-1">Trading Activity</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTradeMarkers(v => !v)}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#222222] flex items-center justify-between text-[#CCCCCC]"
+                  >
+                    <span>My Buy/Sell &amp; F&amp;O Markers</span>
+                    <span className="w-3 h-3 border border-[#444] flex items-center justify-center text-[9px] text-[#00E676]">
+                      {showTradeMarkers ? '✓' : ''}
                     </span>
                   </button>
                 </div>
