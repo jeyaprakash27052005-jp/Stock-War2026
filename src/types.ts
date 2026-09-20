@@ -2,6 +2,7 @@ export interface Stock {
   sym: string;
   name: string;
   sector: string;
+  exchange?: 'NSE' | 'BSE';
   price: number;
   prevClose: number;
   ltp: number;
@@ -64,6 +65,7 @@ export interface Transaction {
   side: 'buy' | 'sell';
   qty: number;
   price: number;
+  exchange?: 'NSE' | 'BSE';
 }
 
 export interface FnoTransaction {

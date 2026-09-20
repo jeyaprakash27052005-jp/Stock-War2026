@@ -599,7 +599,7 @@ export default function App() {
   };
 
   // Student Equity Trade Execution (Saved directly to Cloud Firestore)
-  const handleEquityTrade = useCallback(async (sym: string, side: 'buy' | 'sell', qty: number, price: number) => {
+  const handleEquityTrade = useCallback(async (sym: string, side: 'buy' | 'sell', qty: number, price: number, exchange: 'NSE' | 'BSE' = 'NSE') => {
     if (!currentRoll) return;
     if (portfolio.isFrozen) {
       throw new Error('Account is freezed. Trading is disabled.');
@@ -639,7 +639,7 @@ export default function App() {
       cash: updatedCash,
       holdings: currentHoldings,
       transactions: [
-        { time: Date.now(), sym, side, qty, price },
+        { time: Date.now(), sym, side, qty, price, exchange },
         ...(portfolio.transactions || [])
       ]
     };
@@ -961,6 +961,37 @@ export default function App() {
     }
   };
 
+  // Teacher adds a brand new F&O-only instrument (Index or Commodity) - no
+  // equity/cash-market side, just a derivatives contract with a starting expiry.
+  const handleAddIndex = async (data: { sym: string; name: string; kind: 'INDEX' | 'COMMODITY'; spot: number; sigma: number; lotSize: number; strikeStep: number; expiry: number }) => {
+    const normalized = data.sym.toUpperCase();
+    await addFnoExpiryToFirestore(normalized, data.expiry, {
+      name: data.name,
+      kind: data.kind,
+      sigma: data.sigma,
+      lotSize: data.lotSize,
+      strikeStep: data.strikeStep
+    });
+    setUnderlyings(prev => {
+      if (prev.some(u => u.sym === normalized)) return prev;
+      return [
+        ...prev,
+        {
+          sym: normalized,
+          name: data.name,
+          kind: data.kind,
+          spot: data.spot,
+          prevSpot: data.spot,
+          sigma: data.sigma,
+          lotSize: data.lotSize,
+          strikeStep: data.strikeStep,
+          expiries: [data.expiry],
+          isCustom: true
+        }
+      ];
+    });
+  };
+
   // Teacher deletes a company or instrument from both segments & local state
   const handleDeleteCompany = async (sym: string) => {
     const normalized = sym.toUpperCase();
@@ -1173,6 +1204,7 @@ export default function App() {
                 onDeleteCompany={handleDeleteCompany}
                 onUpdateUnderlyingExpiry={handleAddUnderlyingExpiry}
                 onRemoveUnderlyingExpiry={handleRemoveUnderlyingExpiry}
+                onAddIndex={handleAddIndex}
               />
             )}
           </main>

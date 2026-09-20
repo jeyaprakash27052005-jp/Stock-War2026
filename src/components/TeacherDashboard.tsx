@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Snowflake, Trash2, RotateCcw, Lock, AlertTriangle, CheckCircle2, Printer, Mail, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Portfolio, Stock, FnoUnderlying, Holding, FnoPosition, StudentProfile, TeacherTabKey } from '../types';
-import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, sortExpiries, RISK_FREE } from '../marketData';
+import { inr, pct, STARTING_CASH, futPrice, bsPrice, daysToExpiry, formatExpiryDate, sortExpiries, expiryToDateInputValue, RISK_FREE } from '../marketData';
 
 interface TeacherDashboardProps {
   activeTab: TeacherTabKey;
@@ -20,6 +20,7 @@ interface TeacherDashboardProps {
   onDeleteCompany: (sym: string) => Promise<void>;
   onUpdateUnderlyingExpiry: (sym: string, expiry: number) => Promise<void>;
   onRemoveUnderlyingExpiry: (sym: string, expiry: number) => Promise<void>;
+  onAddIndex: (data: { sym: string; name: string; kind: 'INDEX' | 'COMMODITY'; spot: number; sigma: number; lotSize: number; strikeStep: number; expiry: number }) => Promise<void>;
 }
 
 interface ActionModalConfig {
@@ -48,7 +49,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onAddCompany,
   onDeleteCompany,
   onUpdateUnderlyingExpiry,
-  onRemoveUnderlyingExpiry
+  onRemoveUnderlyingExpiry,
+  onAddIndex
 }) => {
   const [registrationSearch, setRegistrationSearch] = useState<string>('');
   const [selectedStudentRoll, setSelectedStudentRoll] = useState<string | null>(null);
@@ -62,6 +64,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [studentStatusFilter, setStudentStatusFilter] = useState<'ALL' | 'ACTIVE' | 'FROZEN' | 'DELETED'>('ALL');
   const [companySearch, setCompanySearch] = useState<string>('');
   const [companySectorFilter, setCompanySectorFilter] = useState<string>('ALL');
+  const [companyExchangeFilter, setCompanyExchangeFilter] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
 
   // Action Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState<ActionModalConfig | null>(null);
@@ -72,6 +75,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [editingCompany, setEditingCompany] = useState<Stock | null>(null);
   const [editName, setEditName] = useState('');
   const [editSector, setEditSector] = useState('');
+  const [editExchange, setEditExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [editPrice, setEditPrice] = useState<number>(0);
   const [editFno, setEditFno] = useState(false);
   const [editLotSize, setEditLotSize] = useState<number>(100);
@@ -82,9 +86,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
   // Add Company Form State
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newSym, setNewSym] = useState('');
-  const [newName, setNewName] = useState('');
+  const [newSym, setNewSym] = useState('');  const [newName, setNewName] = useState('');
   const [newSector, setNewSector] = useState('IT');
+  const [newExchange, setNewExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [newCustomSector, setNewCustomSector] = useState('');
   const [newPrice, setNewPrice] = useState<number>(500);
   const [newFno, setNewFno] = useState(false);
@@ -92,6 +96,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [newSigma, setNewSigma] = useState<number>(0.25);
   const [newStrikeStep, setNewStrikeStep] = useState<number>(20);
   const [addMsg, setAddMsg] = useState<string | null>(null);
+
+  // Add New Index / Commodity Form State (single unified form for both kinds)
+  const [showAddIndexForm, setShowAddIndexForm] = useState(false);
+  const [newIndexKind, setNewIndexKind] = useState<'INDEX' | 'COMMODITY'>('INDEX');
+  const [newIndexSym, setNewIndexSym] = useState('');
+  const [newIndexName, setNewIndexName] = useState('');
+  const [newIndexSpot, setNewIndexSpot] = useState<number>(20000);
+  const [newIndexSigma, setNewIndexSigma] = useState<number>(0.18);
+  const [newIndexLotSize, setNewIndexLotSize] = useState<number>(50);
+  const [newIndexStrikeStep, setNewIndexStrikeStep] = useState<number>(50);
+  const [newIndexExpiry, setNewIndexExpiry] = useState<string>(expiryToDateInputValue());
+  const [addIndexMsg, setAddIndexMsg] = useState<string | null>(null);
 
   // F&O Expiry Management State (per-instrument, editable for every stock, index & commodity)
   const [expirySearch, setExpirySearch] = useState<string>('');
@@ -165,18 +181,27 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   // Selected Student Drilldown
   const currentStudentData = studentStats.find(s => s.portfolio.roll === selectedStudentRoll);
 
-  // Filtered Companies
-  const filteredCompanies = allStocks.filter(s => {
-    const matchesSector = companySectorFilter === 'ALL' || s.sector === companySectorFilter;
-    const q = companySearch.trim().toLowerCase();
-    const matchesQ = !q || s.sym.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
-    return matchesSector && matchesQ;
-  });
+  // Filtered Companies - grouped/ordered by exchange (NSE, then BSE) as the primary sort key
+  const filteredCompanies = allStocks
+    .filter(s => {
+      const matchesSector = companySectorFilter === 'ALL' || s.sector === companySectorFilter;
+      const matchesExchange = companyExchangeFilter === 'ALL' || (s.exchange || 'NSE') === companyExchangeFilter;
+      const q = companySearch.trim().toLowerCase();
+      const matchesQ = !q || s.sym.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
+      return matchesSector && matchesExchange && matchesQ;
+    })
+    .sort((a, b) => {
+      const exA = a.exchange || 'NSE';
+      const exB = b.exchange || 'NSE';
+      if (exA !== exB) return exA === 'NSE' ? -1 : 1; // NSE listed before BSE
+      return a.sym.localeCompare(b.sym);
+    });
 
   const handleOpenEdit = (stock: Stock) => {
     setEditingCompany(stock);
     setEditName(stock.name);
     setEditSector(stock.sector);
+    setEditExchange(stock.exchange || 'NSE');
     setEditPrice(stock.ltp);
     const und = underlyings.find(u => u.sym === stock.sym);
     setEditFno(!!und || !!stock.fno);
@@ -198,6 +223,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       await onUpdateCompany(editingCompany.sym, {
         name: editName.trim(),
         sector: editSector,
+        exchange: editExchange,
         price: editPrice,
         ltp: editPrice,
         fno: editFno,
@@ -234,6 +260,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         sym,
         name,
         sector,
+        exchange: newExchange,
         price: newPrice,
         ltp: newPrice,
         prevClose: newPrice,
@@ -251,6 +278,51 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Addition failed';
       setAddMsg(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Add a brand new F&O-only instrument - either an Index or a Commodity, picked
+  // from the same form (unlike stocks, these have no equity/cash-market side).
+  const handleCreateIndex = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const sym = newIndexSym.trim().toUpperCase();
+    const name = newIndexName.trim();
+    if (!sym || !name || newIndexSpot <= 0) {
+      setAddIndexMsg('Symbol, name, and a starting price greater than zero are all required.');
+      return;
+    }
+    if (!newIndexExpiry) {
+      setAddIndexMsg('Pick an initial expiry date.');
+      return;
+    }
+    const expiryMs = new Date(newIndexExpiry + 'T23:59:59').getTime();
+    if (isNaN(expiryMs)) {
+      setAddIndexMsg('Invalid expiry date.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await onAddIndex({
+        sym,
+        name,
+        kind: newIndexKind,
+        spot: newIndexSpot,
+        sigma: newIndexSigma,
+        lotSize: newIndexLotSize,
+        strikeStep: newIndexStrikeStep,
+        expiry: expiryMs
+      });
+      setAddIndexMsg(`Successfully added ${sym} (${newIndexKind === 'INDEX' ? 'Index' : 'Commodity'}) to the F&O segment!`);
+      setNewIndexSym('');
+      setNewIndexName('');
+      setNewIndexSpot(20000);
+      setShowAddIndexForm(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Addition failed';
+      setAddIndexMsg(msg);
     } finally {
       setIsSaving(false);
     }
@@ -1352,6 +1424,17 @@ ${bodyHtml}
                   </div>
                 )}
                 <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Exchange</label>
+                  <select
+                    value={newExchange}
+                    onChange={(e) => setNewExchange(e.target.value as 'NSE' | 'BSE')}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#D4A93F]"
+                  >
+                    <option value="NSE">NSE &mdash; National Stock Exchange</option>
+                    <option value="BSE">BSE &mdash; Bombay Stock Exchange</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-[#6B7680] uppercase mb-1">Initial Price (₹)</label>
                   <input
                     type="number"
@@ -1452,6 +1535,15 @@ ${bodyHtml}
                   </option>
                 ))}
               </select>
+              <select
+                value={companyExchangeFilter}
+                onChange={(e) => setCompanyExchangeFilter(e.target.value as 'ALL' | 'NSE' | 'BSE')}
+                className="bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-2 outline-none focus:border-[#D4A93F]"
+              >
+                <option value="ALL">All Exchanges</option>
+                <option value="NSE">NSE Only</option>
+                <option value="BSE">BSE Only</option>
+              </select>
             </div>
             <div className="text-xs text-[#6B7680]">
               Showing {filteredCompanies.length} companies
@@ -1465,6 +1557,7 @@ ${bodyHtml}
                 <tr className="border-b border-[#1F2A33]">
                   <th className="p-3 text-left text-[11px] uppercase tracking-wider text-[#6B7680]">Symbol</th>
                   <th className="p-3 text-left text-[11px] uppercase tracking-wider text-[#6B7680]">Company Name</th>
+                  <th className="p-3 text-left text-[11px] uppercase tracking-wider text-[#6B7680]">Exchange</th>
                   <th className="p-3 text-left text-[11px] uppercase tracking-wider text-[#6B7680]">Sector</th>
                   <th className="p-3 text-right text-[11px] uppercase tracking-wider text-[#6B7680]">Current Price (₹)</th>
                   <th className="p-3 text-center text-[11px] uppercase tracking-wider text-[#6B7680]">F&amp;O Listed</th>
@@ -1472,11 +1565,22 @@ ${bodyHtml}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1F2A33]">
-                {filteredCompanies.map(stock => {
+                {filteredCompanies.map((stock, idx) => {
                   const hasFno = underlyings.some(u => u.sym === stock.sym) || !!stock.fno;
+                  const exchange = stock.exchange || 'NSE';
+                  const prevExchange = idx > 0 ? (filteredCompanies[idx - 1].exchange || 'NSE') : null;
+                  const showGroupHeader = companyExchangeFilter === 'ALL' && exchange !== prevExchange;
 
                   return (
-                    <tr key={stock.sym} className="hover:bg-[#141B23]">
+                    <React.Fragment key={stock.sym}>
+                      {showGroupHeader && (
+                        <tr className="bg-[#141B23]">
+                          <td colSpan={7} className="p-2 text-[11px] uppercase tracking-wider font-bold text-[#D4A93F] border-y border-[#1F2A33]">
+                            {exchange} &mdash; {filteredCompanies.filter(s => (s.exchange || 'NSE') === exchange).length} listed
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="hover:bg-[#141B23]">
                       <td className="p-3 font-bold text-[#F1F4F6] flex items-center gap-2">
                         {stock.sym}
                         {stock.isCustom && (
@@ -1487,6 +1591,15 @@ ${bodyHtml}
                       </td>
                       <td className="p-3 text-xs text-[#C9D3D9] font-sans max-w-xs truncate">
                         {stock.name}
+                      </td>
+                      <td className="p-3 text-xs">
+                        <span className={`text-[10px] px-1.5 py-0.5 uppercase font-bold border ${
+                          exchange === 'NSE'
+                            ? 'bg-[#5B9DD9]/10 text-[#5B9DD9] border-[#5B9DD9]/30'
+                            : 'bg-[#9B6BD6]/10 text-[#9B6BD6] border-[#9B6BD6]/30'
+                        }`}>
+                          {exchange}
+                        </span>
                       </td>
                       <td className="p-3 text-xs text-[#6B7680]">{stock.sector}</td>
                       <td className="p-3 text-right text-sm font-semibold text-[#D4A93F]">
@@ -1531,7 +1644,8 @@ ${bodyHtml}
                           )}
                         </div>
                       </td>
-                    </tr>
+                      </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -1581,16 +1695,28 @@ ${bodyHtml}
                       />
                     </div>
                     <div>
-                      <label className="block text-[#6B7680] uppercase mb-1">Market Price (₹)</label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.05"
-                        value={editPrice}
-                        onChange={(e) => setEditPrice(parseFloat(e.target.value) || 0)}
+                      <label className="block text-[#6B7680] uppercase mb-1">Exchange</label>
+                      <select
+                        value={editExchange}
+                        onChange={(e) => setEditExchange(e.target.value as 'NSE' | 'BSE')}
                         className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2.5 outline-none focus:border-[#D4A93F]"
-                      />
+                      >
+                        <option value="NSE">NSE</option>
+                        <option value="BSE">BSE</option>
+                      </select>
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[#6B7680] uppercase mb-1">Market Price (₹)</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.05"
+                      value={editPrice}
+                      onChange={(e) => setEditPrice(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2.5 outline-none focus:border-[#D4A93F]"
+                    />
                   </div>
 
                   <div className="border-t border-[#1F2A33] pt-3">
@@ -1689,14 +1815,167 @@ ${bodyHtml}
                 only the ✕ on a specific series removes just that one.
               </p>
             </div>
-            <input
-              type="text"
-              placeholder="Search underlying..."
-              value={expirySearch}
-              onChange={(e) => setExpirySearch(e.target.value)}
-              className="bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-1.5 font-mono outline-none focus:border-[#D4A93F]"
-            />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAddIndexForm(!showAddIndexForm)}
+                className="px-4 py-2 bg-[#9B6BD6] text-[#0A0E14] text-xs font-bold uppercase tracking-wider hover:brightness-110 cursor-pointer whitespace-nowrap"
+              >
+                {showAddIndexForm ? 'Close Add Form' : '+ Add New Index / Commodity'}
+              </button>
+              <input
+                type="text"
+                placeholder="Search underlying..."
+                value={expirySearch}
+                onChange={(e) => setExpirySearch(e.target.value)}
+                className="bg-[#10161D] border border-[#1F2A33] text-[#F1F4F6] text-xs px-3 py-1.5 font-mono outline-none focus:border-[#D4A93F]"
+              />
+            </div>
           </div>
+
+          {showAddIndexForm && (
+            <form onSubmit={handleCreateIndex} className="bg-[#10161D] border border-[#9B6BD6]/40 p-4 space-y-3 text-xs font-mono">
+              <h4 className="text-xs uppercase font-bold tracking-wider text-[#9B6BD6]">
+                Add New Index or Commodity to the F&amp;O Segment
+              </h4>
+              <p className="text-[#6B7680]">
+                Use this one form for either kind - pick "Index" for a benchmark like NIFTY/SENSEX-style
+                instruments, or "Commodity" for GOLD/SILVER-style instruments. These are F&amp;O-only contracts
+                with no separate cash-market listing.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Instrument Type</label>
+                  <div className="flex border border-[#1F2A33]">
+                    <button
+                      type="button"
+                      onClick={() => setNewIndexKind('INDEX')}
+                      className={`flex-1 py-2 font-bold uppercase tracking-wider cursor-pointer ${
+                        newIndexKind === 'INDEX' ? 'bg-[#9B6BD6] text-[#0A0E14]' : 'bg-[#141B23] text-[#6B7680]'
+                      }`}
+                    >
+                      Index
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewIndexKind('COMMODITY')}
+                      className={`flex-1 py-2 font-bold uppercase tracking-wider cursor-pointer ${
+                        newIndexKind === 'COMMODITY' ? 'bg-[#9B6BD6] text-[#0A0E14]' : 'bg-[#141B23] text-[#6B7680]'
+                      }`}
+                    >
+                      Commodity
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Symbol</label>
+                  <input
+                    type="text"
+                    required
+                    value={newIndexSym}
+                    onChange={(e) => setNewIndexSym(e.target.value.toUpperCase())}
+                    placeholder={newIndexKind === 'INDEX' ? 'e.g. MIDCPNIFTY' : 'e.g. COPPER'}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[#6B7680] uppercase mb-1">Display Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newIndexName}
+                  onChange={(e) => setNewIndexName(e.target.value)}
+                  placeholder={newIndexKind === 'INDEX' ? 'e.g. Nifty Midcap Select' : 'e.g. Copper'}
+                  className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Starting Spot Price (₹)</label>
+                  <input
+                    type="number"
+                    min="0.05"
+                    step="0.05"
+                    required
+                    value={newIndexSpot}
+                    onChange={(e) => setNewIndexSpot(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Volatility (Sigma)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    value={newIndexSigma}
+                    onChange={(e) => setNewIndexSigma(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Lot Size</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    required
+                    value={newIndexLotSize}
+                    onChange={(e) => setNewIndexLotSize(parseInt(e.target.value) || 0)}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Strike Step</label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    required
+                    value={newIndexStrikeStep}
+                    onChange={(e) => setNewIndexStrikeStep(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#6B7680] uppercase mb-1">Initial Expiry</label>
+                  <input
+                    type="date"
+                    required
+                    value={newIndexExpiry}
+                    onChange={(e) => setNewIndexExpiry(e.target.value)}
+                    className="w-full bg-[#141B23] border border-[#1F2A33] text-[#F1F4F6] p-2 outline-none focus:border-[#9B6BD6]"
+                  />
+                </div>
+              </div>
+
+              {addIndexMsg && (
+                <div className={`p-2 border ${
+                  addIndexMsg.startsWith('Successfully')
+                    ? 'border-[#2FBF71]/40 text-[#2FBF71] bg-[#2FBF71]/10'
+                    : 'border-[#E2564F]/40 text-[#E2564F] bg-[#E2564F]/10'
+                }`}>
+                  {addIndexMsg}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="px-5 py-2.5 bg-[#9B6BD6] text-[#0A0E14] font-bold text-xs uppercase tracking-wider hover:brightness-110 cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? 'Adding...' : 'Save to Cloud Database'}
+              </button>
+            </form>
+          )}
 
           {expiryToast && (
             <div className={`p-2.5 border text-xs font-mono ${

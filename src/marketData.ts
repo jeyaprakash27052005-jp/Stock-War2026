@@ -18,6 +18,7 @@ function tag(sector: string, arr: [string, string, number][]): Stock[] {
       sym,
       name,
       sector,
+      exchange: (seed % 5 === 0 ? 'BSE' : 'NSE') as 'NSE' | 'BSE',
       price,
       prevClose,
       open,

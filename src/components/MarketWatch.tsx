@@ -7,7 +7,7 @@ import { BarChart3 } from 'lucide-react';
 interface MarketWatchProps {
   stocks: Stock[];
   cash: number;
-  onTrade: (sym: string, side: 'buy' | 'sell', qty: number, price: number) => Promise<void>;
+  onTrade: (sym: string, side: 'buy' | 'sell', qty: number, price: number, exchange: 'NSE' | 'BSE') => Promise<void>;
 }
 
 export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade }) => {
@@ -18,6 +18,7 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
     side: 'buy' | 'sell';
   } | null>(null);
   const [orderQty, setOrderQty] = useState<number>(1);
+  const [orderExchange, setOrderExchange] = useState<'NSE' | 'BSE'>('NSE');
   const [orderError, setOrderError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [profileStockSym, setProfileStockSym] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
   const handleOpenOrder = (stock: Stock, side: 'buy' | 'sell') => {
     setOrderModal({ stock, side });
     setOrderQty(1);
+    setOrderExchange(stock.exchange || 'NSE');
     setOrderError(null);
   };
 
@@ -55,7 +57,7 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
 
     setSubmitting(true);
     try {
-      await onTrade(stock.sym, side, qty, stock.ltp);
+      await onTrade(stock.sym, side, qty, stock.ltp, orderExchange);
       setOrderModal(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Trade execution failed';
@@ -191,7 +193,14 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
                       </button>
                     </td>
                     <td className="p-3 text-xs text-[#6B7680] font-['IBM_Plex_Sans',sans-serif]">
-                      {stock.sector}
+                      <div>{stock.sector}</div>
+                      <span className={`inline-block mt-1 text-[9px] px-1.5 py-0.5 uppercase font-bold border ${
+                        (stock.exchange || 'NSE') === 'NSE'
+                          ? 'bg-[#5B9DD9]/10 text-[#5B9DD9] border-[#5B9DD9]/30'
+                          : 'bg-[#9B6BD6]/10 text-[#9B6BD6] border-[#9B6BD6]/30'
+                      }`}>
+                        {stock.exchange || 'NSE'}
+                      </span>
                     </td>
                     <td className="p-3 text-right">
                       <span className={`inline-block px-2 py-0.5 rounded text-sm ${tickFlashClass}`}>
@@ -269,6 +278,32 @@ export const MarketWatch: React.FC<MarketWatchProps> = ({ stocks, cash, onTrade 
             </div>
 
             <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs uppercase text-[#6B7680] tracking-wider mb-1.5 font-medium">
+                  Route Order Through Exchange
+                </label>
+                <div className="flex border border-[#1F2A33]">
+                  <button
+                    type="button"
+                    onClick={() => setOrderExchange('NSE')}
+                    className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer transition ${
+                      orderExchange === 'NSE' ? 'bg-[#5B9DD9] text-[#0A0E14]' : 'bg-[#141B23] text-[#6B7680] hover:text-[#F1F4F6]'
+                    }`}
+                  >
+                    NSE
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderExchange('BSE')}
+                    className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer transition ${
+                      orderExchange === 'BSE' ? 'bg-[#9B6BD6] text-[#0A0E14]' : 'bg-[#141B23] text-[#6B7680] hover:text-[#F1F4F6]'
+                    }`}
+                  >
+                    BSE
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs uppercase text-[#6B7680] tracking-wider mb-1.5 font-medium">
                   {orderModal.side === 'buy' ? 'Quantity to Buy (Shares)' : 'Quantity to Sell (Shares)'}

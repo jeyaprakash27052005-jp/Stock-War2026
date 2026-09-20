@@ -15,6 +15,7 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
     ...equityTransactions.map(t => ({
       time: t.time,
       kind: 'EQUITY',
+      exchange: t.exchange || 'NSE',
       instrument: t.sym,
       side: t.side,
       qty: `${t.qty} shares`,
@@ -24,6 +25,7 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
     ...fnoTransactions.map(t => ({
       time: t.time,
       kind: t.kind,
+      exchange: null as string | null,
       instrument: t.kind === 'FUT' ? `${t.underlying} FUT` : `${t.underlying} ${t.strike} ${t.optType}`,
       side: t.side,
       qty: `${t.lots} lots`,
@@ -74,7 +76,14 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({
                       })}
                     </td>
                     <td className="p-3 font-bold text-[#F1F4F6]">{log.instrument}</td>
-                    <td className="p-3 text-xs text-[#D4A93F]">{log.kind}</td>
+                    <td className="p-3 text-xs text-[#D4A93F]">
+                      {log.kind}
+                      {log.exchange && (
+                        <span className="ml-1.5 text-[9px] px-1 py-0.5 uppercase font-bold border border-[#6B7680]/40 text-[#6B7680]">
+                          {log.exchange}
+                        </span>
+                      )}
+                    </td>
                     <td className={`p-3 text-xs font-bold uppercase ${isBuy ? 'text-[#2FBF71]' : 'text-[#E2564F]'}`}>
                       {log.side}
                     </td>
